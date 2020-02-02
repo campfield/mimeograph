@@ -1,0 +1,37 @@
+---
+#
+# Configuration file for Vagrant Plugins
+#
+
+default_settings:
+  vagrant:
+    plugins:
+      defaults:
+        code_load: false
+        install_state: 'installed'
+        manage_plugins_state: true
+      managed_plugins:
+        vagrant-aws:
+          install_state: 'installed'
+          version: '0.7.1'
+        vagrant-cachier:
+          code_load: true
+          install_state: 'uninstalled'
+          settings:
+            cache_scope: ':box'
+            cache_enabled: true
+            synced_folder_opts:
+              type: :nfs
+              mount_options: ['rw', 'vers=3', 'tcp', 'nolock']
+        vagrant-hostmanager:
+          install_state: 'ignore'
+        vagrant-host-shell:
+        vagrant-list:
+        vagrant-nuke:
+        vagrant-persistent-storage:
+          install_state: 'ignore'
+        vagrant-vbguest:
+          code_load: false
+          settings:
+            auto_update: true
+            no_remote: true

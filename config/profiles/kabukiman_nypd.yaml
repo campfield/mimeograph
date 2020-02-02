@@ -1,0 +1,45 @@
+---
+
+- name: kabukiman
+  providers:
+    virtualbox:
+      instance:
+        box:
+          name: centos_7_x64-upstream
+          url: https://vagrantcloud.com/centos/boxes/7/versions/2020.01/providers/virtualbox.box;
+        communication:
+          ssh:
+            username: 'root'
+            auth_method: 'keypair'
+        commands:
+          system:
+            'selinux':
+              call_count: once
+              text: 'files/scripts/os/selinux.sh'
+              type: 'path'
+
+
+- name: lotus
+  providers:
+    virtualbox:
+      instance:
+        autostart: true
+        box:
+          name: generic/centos8
+        networking:
+          interfaces:
+            eth1:
+              ipv4:
+                ip_addr: random
+            eth2:
+              ipv4:
+                ip_addr: random
+          forwarded_ports:
+            gopher:
+              host_port: 7070
+              instance_port: 70
+        site_settings:
+          package_managers:
+            package_manager: 'dnf'
+            yum:
+              repository_id: 'centos-8-localhost-dnf'

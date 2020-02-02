@@ -1,0 +1,23 @@
+---
+#
+# Configuration file for managing Boxes maintained in the global catalog [UNIMPLEMENTED]
+#
+default_settings:
+  vagrant:
+    boxes:
+      defaults:
+        download_insecure: false
+        install_state: 'present'
+        providers:
+          - virtualbox
+      managed_boxes:
+        'bento/scientific-7.7':
+          providers:
+            virtualbox:
+              install_state: 'present'
+              versions:
+                - 'reserved for future use'
+        'bento/centos-6.8':
+          providers:
+            - virtualbox
+            - vmware

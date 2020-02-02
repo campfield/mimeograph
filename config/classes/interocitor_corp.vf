@@ -1,0 +1,85 @@
+#
+# The basis of a Vagrant sub-class (sub-class file)
+#
+def instance_class_function()
+
+  autostart_default = false
+
+  #
+  # Loop over each instance profile
+  #
+  load_profiles(__FILE__)&.each do | instance_profile |
+
+    #
+    # Look up default settings per sub-class
+    #
+    default_settings = load_profile_defaults(__FILE__)
+
+    #
+    # Perform merge of the instance profile and any defaults.
+    #
+    if instance_profile
+      instance_profile = instance_profile.deep_merge(default_settings)
+    elsif instance_profile
+      instance_profile = instance_profile
+    else
+      exit_with_message("no settings, default or instance_profile, found.")
+    end
+
+    #
+    # Pull out the current instance's name
+    #
+    instance_name = replace_characters_string(instance_profile['name'])
+
+    #
+    # Find the provider(s) that will be enabled for the instance (VirtualBox, VMware, Docker)
+    #
+    providers = [
+      lookup_values_yaml(instance_profile, ['providers', 'enabled']),
+      lookup_values_yaml(instance_profile, ['providers', 'defaults', 'providers', 'enabled']),
+      ['virtualbox']
+    ].find { |i| !i.nil? }
+
+    #
+    # Currently Vagrant only supports one specific name even across different providers.
+    #
+    provider_count = providers.length
+    if !provider_count.nil? and provider_count > 1
+      exit_with_message("instance_name [#{instance_name}] has [#{provider_count}] enabled providers when only 1 identially named system is currently supported by Vagrant.")
+    end
+
+    #
+    # Loop each over each provider and perform Vagrant/Ruby actions
+    #
+    providers.each do | provider |
+      synced_fs_objects = {}
+
+      autostart = [
+        lookup_values_yaml(instance_profile, ['providers', provider, 'instance', 'autostart']),
+        lookup_values_yaml(instance_profile, ['providers', 'defaults', 'providers', 'autostart']),
+        autostart_default
+      ].find { |i| !i.nil? }
+
+      #
+      # If we define other synced_fs_objects (e.g. host <=> instance mount points) we merge
+      #  them into the instance profile.
+      #
+
+      if synced_fs_objects
+        synced_fs_objects = populate_hash_synced_fs_objects(synced_fs_objects)
+        instance_profile = instance_profile.deep_merge(synced_fs_objects)
+      end
+
+
+      Vagrant.configure(VAGRANT_VERSION) do |config|
+        config.vm.define instance_name, autostart: autostart do |machine|
+          configure_instances(machine, instance_profile, provider)
+        end
+      end
+
+    end
+  end
+end
+
+# Call the previously defined function.
+instance_class_function()

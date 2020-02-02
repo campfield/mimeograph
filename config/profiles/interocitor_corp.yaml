@@ -1,0 +1,32 @@
+---
+
+- name: exeter
+  providers:
+    virtualbox:
+      instance:
+        box:
+          name: metaluna_project_virtbox
+          url: http://localhost/vm_exports/metaluna_project_virtbox.box
+
+        commands:
+          system:
+            "mind_control_enable":
+              call_count: "always"
+              privileged: true
+              text: "echo mind_control_enable false"
+              type: "inline"
+
+- name: meacham
+  providers:
+    virtualbox:
+      instance:
+        box:
+          name: esu_16
+
+        commands:
+          system:
+            "intensifier_rotate":
+              call_count: "once"
+              text: "files/scripts/interocitor/rotate.sh"
+              type: "path"
+

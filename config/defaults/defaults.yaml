@@ -1,0 +1,102 @@
+---
+#
+# Configuration file for the 'default' set of global defaults.
+#
+default_settings:
+  providers:
+    defaults:
+      providers:
+        autostart: false
+        enabled:
+          - 'virtualbox'
+    libvirt:
+      instance:
+        autostart: false
+        boot_timeout: 0
+        box:
+          name: 'centos/7'
+    virtualbox:
+      instance:
+        autostart: false
+        boot_timeout: 0
+        box:
+          name: centos_7_x64-ethx-vagrant
+          download_insecure: true
+          linked_clone: true
+
+        commands:
+          defaults:
+            system:
+              type: "path"
+              call_count: "once"
+              privileged: true
+              method: "shell"
+        communication:
+          display:
+            gui: false
+
+          ssh:
+            forward_agent: true
+            forward_x11: true
+            insert_key: false
+            #password: 'hashicorp'
+            password: 'vagrant'
+            username: 'root'
+            auth_method: 'keypair'
+
+        hardware:
+          cpus: 2
+          memory: 1024
+          modifyvm:
+            "--ioapic": "on"
+            "--vram": "64"
+
+        networking:
+          defaults:
+            auto_config: true
+            ipv4:
+              bootproto: 'static'
+              ip_addr: 'random'
+              mtu: 9000
+              netmask: '255.255.0.0'
+              octets_slash_24: '10.0.101'
+            forward_port_auto_correct: true
+            forward_port_protocol: 'tcp'
+            nic_type: 'virtio'
+            promiscuous_mode: false
+            virtualbox__intnet: 'internal'
+            zone_class: 'private_network'
+          forwarded_ports:
+            http:
+              instance_port: 80
+              host_port: 8080
+            https:
+              instance_port: 443
+              host_port: 8443
+
+        site_settings:
+          package_managers:
+            defaults:
+              package_manager: 'none'
+              yum:
+                repository_id: 'none'
+
+        storage:
+          filesystems:
+            defaults:
+              group: 'root'
+              mount_options: "dmode='755',fmode='755'"
+              owner: 'root'
+              prepend_base_directory: false
+              sharedfoldersenablesymlinkscreate: true
+              sync_type: 'sync'
+              rsync:
+                verbose: false
+            synced_fs_objects:
+              '/var/tmp':
+                'host_path': '/var/tmp'
+                'instance_path': '/opt/var_tmp_host'
+              '/vagrant':
+                'host_path': 'sync_directories'
+                'instance_path': '/vagrant'
+                'prepend_base_directory': true

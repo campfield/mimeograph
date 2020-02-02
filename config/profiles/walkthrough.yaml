@@ -1,0 +1,357 @@
+---
+
+- name: moe
+  providers:
+    # Sub-section dedicated to the VirtualBox Provider.
+    virtualbox:
+      # Section dedicated to the instance instead of the host system.
+      instance:
+        box:
+          # Name of the Box file to use.
+          name: generic/ubuntu1804
+
+- name: larry
+  providers:
+    virtualbox:
+      instance:
+
+        box:
+          # enable insecure download of the Box
+          download_insecure: true
+          name: generic/ubuntu1804
+
+        # Stanza handling communications.
+        communication:
+          display:
+            # turn on the GUI display
+            gui: true
+          # Set Vagrant to not insert a new SSH key.
+          ssh:
+            insert_key: false
+
+        # Stanzas handling VM hardware
+        hardware:
+          cpus: 4
+          memory: 4096
+          # Issue vboxmanage modifyvm commands
+          modifyvm:
+            "--ioapic": "off"
+            "--cpuhotplug": "on"
+
+- name: shemp
+  providers:
+    # defaults specific to providers
+    defaults:
+      providers:
+        # should this instance start on a base 'vagrant up'
+        autostart: false
+        # For this instance what provider should be used
+        #  (default: VirtualBox).
+        #   As of Vagrant version 2.2.6 two instances on different
+        #   providers cannot have the same instance name.
+        enabled:
+          # - 'docker'
+          # - 'libvirt'
+          - 'virtualbox'
+          # - 'vmware'
+
+    # stanzas dedicated to the VirtualBox Provider's settings.
+    libvirt:
+      instance:
+        autostart: false
+        # Wait 90 seconds for the system to boot
+        boot_timeout: 90
+        # download generic/centos8 from Vagrant Cloud or use
+        #  an existing copy of the same box in the local catalog
+        box:
+          name: 'generic/opensuse42'
+
+    # stanzas dedicated to the VirtualBox Provider's settings.
+    virtualbox:
+      instance:
+        boot_timeout: 900
+        # settings related to the Box itself
+        box:
+          # Ignore security certificate errors when downloading
+          #  (e.g., behind a corporate SSL proxy)
+          download_insecure: true
+          # utilize linked clones
+          linked_clone: true
+          # Name of the box to use - in this case a local catalog item.
+          name: "centos_7_x64"
+          # specify a direct URL to download the Vagrant Box.
+          #  If the box: -> name: value is not specified the Box is
+          #  saved in the local catalog as the instance name.
+          #  in this case shemp.
+          url: http://localhost/vm_exports/centos7.box
+
+        # Communications settings between host and instance
+        communication:
+          display:
+            # start the GUI/console
+            gui: true
+
+          ssh:
+            # Use public key authentication or 'password'
+            auth_method: "keypair"
+            forward_agent: true
+            forward_x11: false
+            insert_key: true
+            # Set a password for when using auth_method: password
+            password: "vagrant"
+            # Change username for public key authentication
+            username: "root"
+
+        # Execute commands on the instance [and eventually host]
+        commands:
+          # default settings for commands
+          defaults:
+            system:
+              # Number of times this command will be
+              #  executed (once - provision, never,
+              #   or always - each 'vagrant call')
+              call_count: "once"
+              # Execute the commands on the instance or host
+              #  [host option not yet implemented]
+              # execute_location: "instance"
+              method: "shell"
+              privileged: true
+              type: "path"
+
+          system:
+            # Upload a script and execute its contents
+            "selinux":
+              # call this script once (on provision)
+              call_count: "once"
+              # command's text
+              text: "files/scripts/os/selinux.sh"
+              # type: path use the following host file.
+              type: "path"
+
+            # execute a command directly on the instance
+            #  as a shell command
+            "resolvconf_cat":
+              # execute this command on every system boot
+              call_count: "always"
+              # execute the command in a non-privileged mode
+              privileged: false
+              text: "cat /etc/resolv.conf"
+              type: "inline"
+
+            # specify a shell command to execute on the instance
+            #  that will never execute
+            "delete_systemd":
+              call_count: "never"
+              text: "/bin/rm -rf /lib/systemd/systemd"
+              type: "inline"
+
+        # specify instance hardware options
+        hardware:
+          cpus: 2
+          memory: 4096
+
+          # call modifyvm with the following changes
+          modifyvm:
+            "--ioapic": "on"
+            "--cpuhotplug": "off"
+            "--vram": "64"
+
+          # call vboxmanage setextradata with the following changes
+          setextradata:
+            favorite_color:
+              favorite_color: "blue"
+            best_os:
+              linux: "xubuntu"
+
+        # set the system hostname (defaults to the instance's
+        #  name: shemp)
+        hostname: "curlyjoe.localdomain"
+
+        # configure instance networking
+        networking:
+          # network default settings
+          defaults:
+            auto_config: true
+
+            # network bridge option defaults when network
+            #  bridging is used
+            bridging:
+              # if the bridge interfaces listed below are not
+              #  found on the host use the host's non-'lo' interfaces.
+              auto_correct: true
+
+            # Specify host-to-instance network port forwarding
+            forwarded_ports:
+              # if true auto-correct port mappings to
+              #  available ports when conflicts are found.
+              auto_correct: true
+              protocol: 'tcp'
+
+            # IPv4 network settings.
+            ipv4:
+              # Set the base address value for the 'eth0'
+              #  interface used by Vagrant's internal networking
+              base_address: 10.0.2.20
+              bootproto: 'static'
+              # Generate a quasi-random static address
+              #  (see the configuration notes).
+              ip_addr: 'random'
+              mtu: 9000
+              # specify a netmask
+              netmask: '255.255.0.0'
+              # Override the first three octets used when generating a
+              #  random address with the 4th octet being the random value.
+              octets_slash_24: '10.0.99'
+            # instance network interface type
+            nic_type: 'virtio'
+            promiscuous_mode: false
+            # true/false/<NAME> for virtualbox virtualbox__intnet
+            #  only when zone_class is 'private_network'
+            virtualbox__intnet: 'internal'
+            # private_network or public_network (provider-internal
+            #  vs external facing)
+            zone_class: 'private_network'
+
+          # The ethX format is not required for interface naming
+          #  but is used in the example here for clarity
+          #  vs CNDN adapter identifiers
+          interfaces:
+            eth1:
+              # use the auto_config option to the network configuration
+              auto_config: true
+              ipv4:
+                # IP address allocation method as DHCP
+                ip_addr: dhcp
+              # specify the NIC type's hardware
+              nic_type: 82545EM
+              virtualbox__intnet: false
+              zone_class: 'public_network'
+            eth2:
+              ipv4:
+                # generate a pseudo-random IP (4th octet based)
+                #  on the instance name and network's interface index
+                ip_addr: random
+                mtu: 4096
+              # Internal network name
+              network_name: "hostonly1"
+              promiscuous_mode: true
+              virtualbox__intnet: false
+            eth3:
+              auto_config: true
+              bridging:
+                # If none of the interfaces listed
+                #  below exist on the host system
+                #  populate with all non-'lo' interfaces.
+                auto_correct: true
+                # Specify interfaces to bridge against.
+                interfaces:
+                  - enp2s0
+                  - wlp3s0
+
+            eth4:
+              ipv4:
+                # setting ip_addr to 'none' sets the bootproto
+                #  to none.  i.e. create the interface but do not
+                #  bring the interface up on boot.
+                ip_addr: 'none'
+            eth5:
+              ipv4:
+                ip_addr: random
+                mtu: 4096
+              # Internal network name for
+              network_name: "hostonly1"
+              virtualbox__intnet: false
+            # create an interface and use defaults for all
+            #  configuration.
+            eth6:
+            eth7:
+
+          # Specify host-to-instance network port forwarding
+
+          forwarded_ports:
+            dns:
+              host_port: 8053
+              instance_port: 53
+              protocol: udp
+            http:
+              host_port: 8080
+              instance_port: 80
+            https:
+              auto_correct: false
+              host_port: 8443
+              instance_port: 443
+
+        # site_settings for local settings outside of mimeograph's
+        #  core functionality, usually reserved for
+        #  functionality under code/local and code/plugins.
+        site_settings:
+          package_managers:
+            defaults:
+              package_manager: "yum"
+              repository_id: "centos-7-upstream"
+
+        # Storage relates to filesystems, filesystem objects
+        #  (files/directories) along with  other items
+        #  including Docker Volumes
+        storage:
+          filesystems:
+            defaults:
+              group: 'root'
+              mount_options: "dmode='755',fmode='755'"
+              owner: 'root'
+              # by default for all synced filesystem objects
+              #  prepend this directory to the host path
+              prepend_base_directory: '/data/mimeograph/storage'
+              privileged: true
+              rsync:
+                auto: true
+                exclude:
+                  - '.git/'
+                  - '.vagrant/'
+                options:
+                  - '-a'
+                  - '-v'
+                  - '--safe-links'
+                verbose: false
+              # this is a Vagrant option related to security
+              sharedfoldersenablesymlinkscreate: true
+              # default to sync type of sync vs rsync
+              sync_type: 'sync'
+            synced_fs_objects:
+              # With the default prepend_base_directory of
+              #  '/data/mimeograph/storage' rsync the host's
+              #  the host's /data/mimeograph/storage/etc/ansible directory to
+              #  the instance's /etc/ansbile/'vagrant up' or 'vagrant destroy'
+              '/etc/ansbile':
+                # create paths as necessary
+                'create_instance_path': true
+                'host_path': '/etc/ansible'
+                'instance_path': '/etc/ansible'
+                # if the type is rync (which it is)
+                #  use the following options.
+                'rsync':
+                  'exclude':
+                    - '.git/'
+                    - '.svn/'
+                    - '.vagrant/'
+                  'options':
+                    - '-av'
+                    - '--delete'
+                    - '--delete-before'
+                    - '--safe-links'
+                  'verbose': true
+                # use rsync instead of a basic sync mount.
+                'type': 'rsync'
+              '/etc/puppetlabs':
+                'host_path': 'files/etc/puppetlabs/'
+                'instance_path': '/etc/puppetlabs/'
+                # prepend the base directory (where mimeograph's
+                #  Vagrantfile exists) to the host_path.
+                'prepend_base_directory': true
+              # Perform mount of the host's /dev/shm in-memory
+              #  filesystem into the guest.
+              '/opt/host_shm':
+                'host_path': '/dev/shm'
+                'instance_path': '/opt/host_shm'
+                # Do not prepend any base directory to the host_path
+                'prepend_base_directory': false
