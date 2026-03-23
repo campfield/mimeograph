@@ -1,0 +1,422 @@
+---
+#
+# config/profiles/example_vmware.yaml
+#
+# Reference profile demonstrating every VMware Desktop configuration option
+# supported by mimeograph.  Three instances are defined:
+#
+#   vmware-minimal  - smallest valid configuration
+#   vmware-typical  - representative development VM
+#   vmware-full     - every supported option shown and documented
+#
+# Prerequisites:
+#   - vagrant-vmware-desktop plugin: set ensure: present in config/plugins/plugins.yaml
+#   - Vagrant VMware Utility installed on the host
+#     https://developer.hashicorp.com/vagrant/docs/providers/vmware/installation
+#   - VMware Fusion, Workstation, or Player installed
+#
+# mimeograph YAML key: 'vmware'
+# Vagrant provider name (resolved internally): 'vmware_desktop'
+#
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MINIMAL
+# Boots a named instance under VMware Desktop.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: vmware-minimal
+  providers:
+    defaults:
+      providers:
+        enabled:
+          - 'vmware'
+    vmware:
+      instance:
+        box:
+          name: generic/ubuntu2204
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TYPICAL
+# A representative VMware VM with custom hardware, private and public network
+# interfaces, and a basic provisioning command.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: vmware-typical
+  providers:
+    defaults:
+      providers:
+        enabled:
+          - 'vmware'
+    vmware:
+      instance:
+        boot_timeout: 300
+        box:
+          name: generic/ubuntu2204
+          linked_clone: false
+          download_insecure: false
+          base_mac: ~
+        verify_vmnet: true
+        hostname: vmware-typical.local
+        set_hostname: true
+        communication:
+          display:
+            gui: false
+          ssh:
+            auth_method: keypair
+            username: vagrant
+            insert_key: true
+        hardware:
+          cpus: 2
+          memory: 2048
+          vmx:
+            displayname: "vmware-typical"
+        networking:
+          interfaces:
+            eth1:
+              ipv4:
+                ip_addr: random
+                octets_slash_24: '192.168.100'
+            eth2:
+              ipv4:
+                ip_addr: dhcp
+              zone_class: public_network
+          forwarded_ports:
+            http:
+              host_port: 8080
+              instance_port: 80
+        storage:
+          filesystems:
+            synced_fs_objects:
+              '/vagrant':
+                host_path: '.'
+                instance_path: /vagrant
+                prepend_base_directory: true
+                type: rsync
+        commands:
+          system:
+            update:
+              text: "apt-get update -qq"
+              type: inline
+              call_count: once
+              privileged: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FULL
+# Every supported VMware Desktop option shown explicitly with inline documentation.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: vmware-full
+  providers:
+
+    defaults:
+      providers:
+        # Whether `vagrant up` (no name) starts this instance.
+        autostart: false
+        # Valid values: 'virtualbox' | 'libvirt' | 'vmware'
+        enabled:
+          - 'vmware'
+
+    vmware:
+      instance:
+
+        # ── Boot ──────────────────────────────────────────────────────────────
+        autostart: false
+        # Seconds to wait for the VM to boot before Vagrant raises an error.
+        boot_timeout: 600
+
+        # ── Box ───────────────────────────────────────────────────────────────
+        box:
+          # Vagrant Cloud name or local catalog name.
+          name: generic/ubuntu2204
+          # Direct URL to download the box from.
+          # url: http://internal/boxes/ubuntu2204-vmware.box
+          # Skip SSL verification on box download.
+          download_insecure: false
+          # Use VMware linked clone.  Faster provisioning, lower disk usage.
+          linked_clone: false
+          # MAC address for the first (NAT) NIC.
+          # ~ (null) randomises the MAC on each clone — recommended default.
+          # Specify a fixed value for DHCP reservations or MAC-keyed policies.
+          base_mac: ~
+
+        # ── VMware-specific settings ────────────────────────────────────────────
+        # Verify vmnet device health before booting.  Recommended.
+        verify_vmnet: true
+        # Path where VMware stores the linked clone.
+        # Defaults to ./.vagrant/machines/<name>/vmware_desktop/
+        # clone_directory: '/fast/ssd/vms'
+        # Host vmnet device for the NAT NIC.
+        # Defaults to auto-detected (usually vmnet8 on Workstation,
+        # vmnet-nat on Fusion).
+        # nat_device: 'vmnet8'
+
+        # ── Hostname ──────────────────────────────────────────────────────────
+        # Guest OS hostname.  Defaults to sanitised instance name if omitted.
+        hostname: vmware-full.example.com
+        # Set to false to skip the hostname provisioner.
+        set_hostname: true
+
+        # ── Communication ─────────────────────────────────────────────────────
+        communication:
+          display:
+            # Open the VMware GUI/console on boot.
+            gui: false
+          ssh:
+            # Valid values: 'keypair' | 'password'
+            auth_method: keypair
+            username: vagrant
+            # Only used when auth_method is 'password'.
+            password: vagrant
+            # Replace the insecure default Vagrant key with a generated keypair.
+            insert_key: true
+            forward_agent: false
+            forward_x11: false
+
+        # ── Hardware ──────────────────────────────────────────────────────────
+        hardware:
+          # Virtual CPU count.  Written to the .vmx file as 'numvcpus'.
+          cpus: 4
+          # RAM in MB.  Written to the .vmx file as 'memsize'.
+          memory: 8192
+
+          # VMX key/value pairs written directly to the .vmx file.
+          # All keys and values are strings in VMX format.
+          # mimeograph writes numvcpus and memsize first; entries here override
+          # those values if duplicated.
+          # Set a key to null (~) to delete it from the .vmx file entirely.
+          vmx:
+            # VM name shown in the VMware UI.
+            displayname: "vmware-full-dev"
+            # Enable VT-x/AMD-V nested virtualisation (Workstation/Fusion Pro).
+            vhv.enable: "TRUE"
+            # Cores per CPU socket (useful for OS licensing).
+            cpuid.coresPerSocket: "2"
+            # 3D acceleration.
+            mks.enable3d: "FALSE"
+            # USB controller.
+            usb.present: "FALSE"
+            # Sound device.
+            sound.present: "FALSE"
+            # Delete a key inherited from the box by setting it to null.
+            # ethernet0.connectionType: ~
+
+        # ── Networking ────────────────────────────────────────────────────────
+        networking:
+
+          # Defaults applied to all interfaces in this instance.
+          defaults:
+            ipv4:
+              # Valid values: static IPv4 | 'random' | 'dhcp' | 'none'
+              #   random - 4th octet derived deterministically from instance name
+              #            and interface index; stable across reprovisions
+              #   none   - skip this interface entirely
+              ip_addr: random
+              netmask: '255.255.255.0'
+              octets_slash_24: '10.10.0'
+              # MTU set via `ip link set` shell provisioner on every boot.
+              mtu: '1500'
+            # Valid values: 'private_network' | 'public_network'
+            #   private_network - VMware host-only VMnet adapter
+            #   public_network  - VMware bridged adapter
+            zone_class: private_network
+            forwarded_ports:
+              auto_correct: true
+              # Valid values: 'tcp' | 'udp' | 'icmp'
+              protocol: tcp
+
+          interfaces:
+
+            # Private network — static IP on a host-only VMnet
+            eth1:
+              ipv4:
+                ip_addr: '10.10.0.10'
+                netmask: '255.255.255.0'
+                mtu: '1500'
+              zone_class: private_network
+
+            # Private network — random deterministic IP
+            eth2:
+              ipv4:
+                ip_addr: random
+                octets_slash_24: '10.10.1'
+                netmask: '255.255.255.0'
+              zone_class: private_network
+
+            # Private network — DHCP on a host-only VMnet
+            eth3:
+              ipv4:
+                ip_addr: dhcp
+              zone_class: private_network
+
+            # Public (bridged) network — VMware auto-selects bridge device
+            eth4:
+              ipv4:
+                ip_addr: dhcp
+              zone_class: public_network
+
+            # Public (bridged) network — explicit host interface specified
+            # 'bridge' names the host interface to bridge against.
+            # Fusion: typically 'en0'; Workstation: typically the VMnet0 bridge.
+            eth5:
+              ipv4:
+                ip_addr: '192.168.1.50'
+                netmask: '255.255.255.0'
+              zone_class: public_network
+              bridge: en0
+
+            # Interface skipped entirely — not added to Vagrant
+            eth6:
+              ipv4:
+                ip_addr: 'none'
+
+          # Host-to-guest port forwarding (via the NAT interface)
+          forwarded_ports:
+            ssh_alt:
+              host_port: 2222
+              instance_port: 22
+              protocol: tcp
+              auto_correct: true
+            http:
+              host_port: 8080
+              instance_port: 80
+            https:
+              host_port: 8443
+              instance_port: 443
+            dns:
+              host_port: 5353
+              instance_port: 53
+              protocol: udp
+            # Omit host_port for a deterministic auto-generated port.
+            app:
+              instance_port: 3000
+
+        # ── Storage / Filesystem Sync ─────────────────────────────────────────
+        # VMware native shared folders (vmhgfs) require VMware Tools and are
+        # not managed by mimeograph.  Use rsync or nfs instead.
+        storage:
+          filesystems:
+
+            defaults:
+              owner: root
+              group: root
+              mount_options: "dmode='755',fmode='644'"
+              # Valid values: 'rsync' | 'nfs' | 'sync' | 'file'
+              # 'rsync' and 'nfs' are recommended for VMware.
+              # 'sync' (vboxsf) is not available on VMware.
+              sync_type: rsync
+              create_instance_path: true
+              prepend_base_directory: false
+              sharedfoldersenablesymlinkscreate: false
+              rsync:
+                auto: true
+                verbose: false
+                privileged: false
+                options:
+                  - '--archive'
+                  - '--copy-links'
+                  - '--delete'
+                  - '--safe-links'
+                exclude:
+                  - '.git/'
+                  - '.vagrant/'
+              nfs:
+                mount_options:
+                  - 'rw'
+                  - 'vers=3'
+                  - 'tcp'
+                  - 'nolock'
+                map_uid: 0
+                map_gid: 0
+                udp: false
+
+            synced_fs_objects:
+
+              # rsync — one-way sync, primary working directory
+              '/vagrant':
+                host_path: '.'
+                instance_path: /vagrant
+                prepend_base_directory: true
+                type: rsync
+                owner: vagrant
+                group: vagrant
+                rsync:
+                  auto: true
+                  verbose: false
+                  options:
+                    - '--archive'
+                    - '--delete'
+                    - '--safe-links'
+
+              # NFS — better performance than rsync for frequently accessed data
+              # Host must export the path; guest needs nfs-common or nfs-utils.
+              '/opt/shared':
+                host_path: '/data/shared'
+                instance_path: /opt/shared
+                prepend_base_directory: false
+                type: nfs
+                create_instance_path: true
+                nfs:
+                  mount_options:
+                    - 'rw'
+                    - 'vers=3'
+                    - 'tcp'
+                    - 'nolock'
+                  map_uid: 0
+                  map_gid: 0
+                  udp: false
+
+              # rsync with elevated guest privileges
+              '/etc/ansible':
+                host_path: 'files/etc/ansible'
+                instance_path: /etc/ansible
+                prepend_base_directory: true
+                type: rsync
+                create_instance_path: true
+                rsync:
+                  auto: true
+                  verbose: true
+                  # Appends --rsync-path='sudo rsync' automatically.
+                  privileged: true
+                  options:
+                    - '--archive'
+                    - '--delete'
+                    - '--delete-before'
+                    - '--safe-links'
+                  exclude:
+                    - '.git/'
+
+              # Single file copy — provision only
+              '/etc/motd':
+                host_path: 'files/motd'
+                instance_path: /etc/motd
+                prepend_base_directory: true
+                type: file
+
+        # ── Provisioning Commands ─────────────────────────────────────────────
+        commands:
+          defaults:
+            system:
+              # Valid values: 'once' | 'always' | 'never'
+              call_count: once
+              privileged: true
+              # Valid values: 'inline' | 'path'
+              type: inline
+
+          system:
+
+            # Run a host-side script once at provision time
+            selinux:
+              text: files/scripts/os/selinux.sh
+              type: path
+              call_count: once
+              privileged: true
+
+            # Run an inline command on every boot
+            check_resolv:
+              text: "cat /etc/resolv.conf"
+              type: inline
+              call_count: always
+              privileged: false
+
+            # Defined but never executed
+            disabled_example:
+              text: "echo this never runs"
+              type: inline
+              call_count: never

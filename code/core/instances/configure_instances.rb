@@ -1,46 +1,28 @@
 #
-# Top-level handler function responsible for calling the various provider instantiation and configuration code.
+# Dispatch to the correct provider's configure_instance() function.
+# Provider code is loaded with require (cached after first load).
 #
-def configure_instances(
-  machine,
-  instance_profile,
-  provider = 'virtualbox'
-)
-
-  name = replace_characters_string(lookup_values_yaml(instance_profile, ['name']))
-
-  if $profile_names_loaded.include?("#{name}-#{provider}")
-    exit_with_message("profile name [#{name}] with provider [#{provider}] is already defined in another location.")
-  else
-    $profile_names_loaded.push("#{name}-#{provider}")
-  end
+def configure_instances(machine, instance_profile, provider = 'virtualbox')
+  return false unless lookup_values_yaml(instance_profile, ['providers', provider])
 
   provider_dir = "#{PROVIDERS_DIR}/#{provider}"
 
-  if $provider_loaded_last != provider
-    if File.directory?(provider_dir)
-      ruby_files = Find.find(provider_dir)
-      ruby_files and ruby_files.each do |ruby_file|
-        load ruby_file if ruby_file=~/\.rb/
-      end
-    else
-      handle_message("failed to load provider directory [#{provider_dir}].")
+  if File.directory?(provider_dir)
+    Find.find(provider_dir).sort.each do |f|
+      require f if f =~ /\.rb$/
     end
-
-    $provider_loaded_last = provider
+  else
+    exit_with_message("provider directory [#{provider_dir}] not found.")
   end
 
   case provider
-  when 'libvirt'
-    configure_instance(machine, instance_profile)
   when 'virtualbox'
-    configure_instance(machine, instance_profile)
+    configure_instance_virtualbox(machine, instance_profile, provider)
+  when 'libvirt'
+    configure_instance_libvirt(machine, instance_profile, provider)
   when 'vmware'
-    configure_instance(machine, instance_profile)
+    configure_instance_vmware(machine, instance_profile, provider)
   else
-    exit_with_message("instance provider [#{provider}] for instance [#{name}] is not supported.")
+    exit_with_message("provider [#{provider}] is not supported.")
   end
 end
-
-
-

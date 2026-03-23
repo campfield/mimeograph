@@ -1,14 +1,14 @@
 #
-# Top-level instance configuration function for the libvirt Provider. [UNIMPLEMENTED]
+# Top-level instance configuration for the libvirt provider.
+# Requires the vagrant-libvirt plugin to be installed.
 #
-def configure_instance(
-  machine,
-  instance_profile,
-  provider = 'libvirt'
-)
+def configure_instance_libvirt(machine, instance_profile, provider = 'libvirt')
+  return false unless lookup_values_yaml(instance_profile, ['providers', provider])
 
-  name = replace_characters_string(lookup_values_yaml(instance_profile, ['name']))
-
-  handle_message("instance [#{name}] provider [#{provider}] not implemented.")
-
+  configure_vagrant_box_libvirt(machine, instance_profile, provider)
+  configure_instance_hardware_libvirt(machine, instance_profile, provider)
+  configure_networking_libvirt(machine, instance_profile, provider)
+  configure_communication(machine, instance_profile, provider)
+  configure_filesystems(machine, instance_profile, provider)
+  execute_system_commands(machine, instance_profile, provider)
 end

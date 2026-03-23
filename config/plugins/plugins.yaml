@@ -1,0 +1,40 @@
+---
+#
+# config/plugins/plugins.yaml
+#
+# Manages Vagrant plugin ensure state.
+#
+# Each entry specifies a plugin name and its desired state.
+#
+#   ensure: present  - ensure the plugin is installed; install if missing (default)
+#   ensure: absent   - ensure the plugin is removed; uninstall if present
+#   ensure: ignore   - take no action regardless of current installed state
+#
+# Optionally pin a specific version with the 'version' key.  Omit for latest.
+#
+# Note: changing 'version' will not auto-update an already-installed plugin.
+# To change versions: set ensure to absent, run vagrant, then set the new
+# version and set ensure back to present.
+#
+plugins:
+  vagrant-vbguest:
+    ensure: present
+    # version: '0.29.0'
+  vagrant-hostmanager:
+    ensure: absent
+  vagrant-cachier:
+    ensure: absent
+  vagrant-aws:
+    ensure: absent
+  vagrant-dns:
+    ensure: absent
+  vagrant-list:
+    ensure: absent
+  vagrant-nuke:
+    ensure: absent
+  vagrant-persistent-storage:
+    ensure: ignore
+  vagrant-libvirt:
+    ensure: absent
+  vagrant-vmware_workstation:
+    ensure: ignore

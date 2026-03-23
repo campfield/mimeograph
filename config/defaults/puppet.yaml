@@ -1,0 +1,52 @@
+---
+#
+# config/defaults/puppet.yaml
+#
+# Default settings for the puppet profile group.
+# These values are deep-merged on top of config/defaults/defaults.yaml.
+# Only values that differ from the global defaults need to be specified here.
+#
+default_settings:
+  providers:
+    defaults:
+      providers:
+        autostart: false
+        enabled:
+          - 'virtualbox'
+    virtualbox:
+      instance:
+        box:
+          # Disable linked clones so that vbox.name is honoured at import time.
+          # With linked_clone: true, Vagrant assigns the default generated name
+          # (directory_machine_timestamp_random) during the clone operation, before
+          # vbox.name or any customize commands can override it.
+          linked_clone: false
+        # Automatically set the guest hostname via shell provisioner.
+        # Set to false to skip.
+        set_hostname: true
+
+        communication:
+          display:
+            gui: false
+          ssh:
+            auth_method: 'keypair'
+            username: 'root'
+            password: 'vagrant'
+            insert_key: false
+            forward_agent: true
+            forward_x11: false
+        hardware:
+          # Virtual CPU count.
+          cpus: 2
+          # RAM in MB.
+          memory: 3072
+
+        storage:
+          filesystems:
+            synced_fs_objects:
+              '/vagrant':
+                prepend_base_directory: true
+                host_path: '.'
+                instance_path: '/vagrant'
+                type: sync
+

@@ -1,0 +1,467 @@
+---
+#
+# config/profiles/example_libvirt.yaml
+#
+# Reference profile demonstrating every libvirt configuration option
+# supported by mimeograph.  Three instances are defined:
+#
+#   libvirt-minimal  - smallest valid configuration
+#   libvirt-typical  - representative KVM development VM
+#   libvirt-full     - every supported option shown and documented
+#
+# Prerequisites:
+#   - vagrant-libvirt plugin: set ensure: present in config/plugins/plugins.yaml
+#   - KVM/QEMU installed on the host (qemu-kvm, libvirt-daemon-system)
+#   - Current user in the 'libvirt' and 'kvm' groups
+#
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MINIMAL
+# Boots a named instance under KVM using the local libvirt socket.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: libvirt-minimal
+  providers:
+    defaults:
+      providers:
+        enabled:
+          - 'libvirt'
+    libvirt:
+      instance:
+        box:
+          name: generic/ubuntu2204
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TYPICAL
+# A representative KVM VM with a private network, NFS mount, and a script.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: libvirt-typical
+  providers:
+    defaults:
+      providers:
+        enabled:
+          - 'libvirt'
+    libvirt:
+      instance:
+        boot_timeout: 300
+        box:
+          name: generic/ubuntu2204
+          download_insecure: false
+        driver: kvm
+        disk_bus: virtio
+        disk_cache: none
+        storage_pool_name: default
+        hostname: libvirt-typical.local
+        set_hostname: true
+        communication:
+          ssh:
+            auth_method: keypair
+            username: vagrant
+            insert_key: true
+        hardware:
+          cpus: 2
+          memory: 2048
+          cpu_mode: host-model
+          nested: false
+          graphics_type: vnc
+          graphics_ip: '127.0.0.1'
+          boot: hd
+        networking:
+          defaults:
+            ipv4:
+              ip_addr: random
+              octets_slash_24: '192.168.121'
+              netmask: '255.255.255.0'
+            zone_class: private_network
+            forward_mode: nat
+          interfaces:
+            eth1:
+              ipv4:
+                ip_addr: random
+          forwarded_ports:
+            http:
+              host_port: 8080
+              instance_port: 80
+        storage:
+          filesystems:
+            defaults:
+              sync_type: nfs
+              nfs:
+                mount_options:
+                  - 'rw'
+                  - 'vers=3'
+                  - 'tcp'
+                  - 'nolock'
+                map_uid: 0
+                map_gid: 0
+            synced_fs_objects:
+              '/vagrant':
+                host_path: '.'
+                instance_path: /vagrant
+                prepend_base_directory: true
+                type: nfs
+        commands:
+          system:
+            update:
+              text: "apt-get update -qq"
+              type: inline
+              call_count: once
+              privileged: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FULL
+# Every supported libvirt option shown explicitly with inline documentation.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: libvirt-full
+  providers:
+
+    defaults:
+      providers:
+        # Whether `vagrant up` (no name) starts this instance.
+        autostart: false
+        # Valid values: 'virtualbox' | 'libvirt' | 'vmware'
+        enabled:
+          - 'libvirt'
+
+    libvirt:
+      instance:
+
+        # ── Boot ──────────────────────────────────────────────────────────────
+        autostart: false
+        # Seconds to wait for the VM to boot before Vagrant raises an error.
+        boot_timeout: 600
+
+        # ── Box ───────────────────────────────────────────────────────────────
+        box:
+          # Vagrant Cloud name or local catalog name.
+          name: generic/ubuntu2204
+          # Direct URL to download the box from.
+          # url: http://internal/boxes/ubuntu2204-libvirt.box
+          # Skip SSL verification on download.
+          download_insecure: false
+
+        # ── Hostname ──────────────────────────────────────────────────────────
+        # Guest OS hostname.  Defaults to sanitised instance name if omitted.
+        hostname: libvirt-full.example.com
+        # Set to false to skip the hostname provisioner.
+        set_hostname: true
+
+        # ── libvirt Connection ─────────────────────────────────────────────────
+        # Hypervisor driver.  'kvm' requires hardware virtualisation.
+        # Valid values: 'kvm' | 'qemu'
+        driver: kvm
+        # Primary disk bus type.
+        # Valid values: 'virtio' | 'scsi' | 'ide' | 'sata'
+        disk_bus: virtio
+        # Primary disk cache mode.
+        # Valid values: 'none' | 'writethrough' | 'writeback' | 'directsync' | 'unsafe'
+        disk_cache: none
+        # libvirt storage pool for box images and snapshots.
+        storage_pool_name: default
+        # Use qemu:///session instead of qemu:///system.
+        # Enable on Fedora Workstation or when not running as root/libvirt group.
+        qemu_use_session: false
+        # ── Remote libvirt connection (comment out for local connections) ──────
+        # host: kvm-host.example.com
+        # connect_via_ssh: true
+        # username: libvirt-user
+        # id_ssh_key_file: ~/.ssh/id_rsa
+        # ── Local non-default socket ─────────────────────────────────────────
+        # socket: /var/run/libvirt/libvirt-sock
+        # ── Full URI override (overrides all other connection settings) ───────
+        # uri: qemu+ssh://user@host/system
+
+        # ── Communication ─────────────────────────────────────────────────────
+        # libvirt does not support a 'gui' flag.
+        # Display is configured via hardware.graphics_type below.
+        communication:
+          ssh:
+            # Valid values: 'keypair' | 'password'
+            auth_method: keypair
+            username: vagrant
+            # Only used when auth_method is 'password'.
+            password: vagrant
+            # Replace the insecure default Vagrant key with a generated keypair.
+            insert_key: true
+            forward_agent: false
+            forward_x11: false
+
+        # ── Hardware ──────────────────────────────────────────────────────────
+        hardware:
+          # Virtual CPU count.
+          cpus: 4
+          # RAM in MB.
+          memory: 4096
+          # CPU emulation mode.
+          # Valid values: 'host-model' | 'host-passthrough' | 'custom'
+          cpu_mode: host-passthrough
+          # CPU model name — required only when cpu_mode is 'custom'.
+          # cpu_model: qemu64
+          # Enable nested KVM virtualisation.
+          nested: true
+          # Display protocol for the guest console.
+          # Valid values: 'vnc' | 'spice' | 'none'
+          graphics_type: spice
+          # IP address the graphics socket binds to.
+          graphics_ip: '127.0.0.1'
+          # Boot device order.
+          # Valid values: 'hd' | 'network' | 'cdrom'
+          boot: hd
+          # Additional storage volumes beyond the primary box disk.
+          # Each entry calls lv.storage :file with the given parameters.
+          disks:
+            - size: '20G'
+              # Valid values: 'qcow2' | 'raw'
+              type: qcow2
+              # Valid values: 'virtio' | 'scsi' | 'ide'
+              bus: virtio
+              cache: none
+            - size: '50G'
+              type: qcow2
+              bus: virtio
+              cache: writethrough
+
+        # ── Networking ────────────────────────────────────────────────────────
+        networking:
+
+          # Defaults applied to all interfaces in this instance.
+          defaults:
+            ipv4:
+              # Valid values: static IPv4 | 'random' | 'dhcp' | 'none'
+              ip_addr: random
+              netmask: '255.255.255.0'
+              octets_slash_24: '10.20.0'
+            # Valid values: 'private_network' | 'public_network'
+            #   private_network - NAT or isolated libvirt network
+            #   public_network  - macvtap bridge to host device (requires 'dev')
+            zone_class: private_network
+            # libvirt network name for private_network interfaces.
+            network_name: vagrant-libvirt
+            # Forwarding mode for auto-created private networks.
+            # Valid values: 'nat' | 'route' | 'none'
+            forward_mode: nat
+            # Enable DHCP on auto-created private networks.
+            dhcp_enabled: true
+            forwarded_ports:
+              auto_correct: true
+              protocol: tcp
+
+          interfaces:
+
+            # Private network — static IP on a named libvirt network
+            eth1:
+              ipv4:
+                ip_addr: '10.20.0.10'
+                netmask: '255.255.255.0'
+              zone_class: private_network
+              network_name: myproject-net
+              forward_mode: nat
+              dhcp_enabled: false
+
+            # Private network — random deterministic IP
+            eth2:
+              ipv4:
+                ip_addr: random
+                octets_slash_24: '10.20.1'
+                netmask: '255.255.255.0'
+              zone_class: private_network
+              network_name: vagrant-libvirt
+
+            # Private network — DHCP
+            eth3:
+              ipv4:
+                ip_addr: dhcp
+              zone_class: private_network
+              forward_mode: nat
+
+            # Isolated private network (no NAT, no external routing)
+            eth4:
+              ipv4:
+                ip_addr: '172.31.0.5'
+                netmask: '255.255.255.0'
+              zone_class: private_network
+              network_name: isolated-net
+              forward_mode: none
+              dhcp_enabled: false
+
+            # Public network — macvtap bridge, DHCP
+            # 'dev' is required for public_network on libvirt.
+            # macvtap does not require a pre-created bridge on the host.
+            eth5:
+              ipv4:
+                ip_addr: dhcp
+              zone_class: public_network
+              # Host network device to create the macvtap interface against.
+              dev: enp3s0
+
+            # Public network — macvtap bridge, static IP
+            eth6:
+              ipv4:
+                ip_addr: '192.168.1.50'
+                netmask: '255.255.255.0'
+              zone_class: public_network
+              dev: enp3s0
+
+            # Interface created but not brought up on boot
+            eth7:
+              ipv4:
+                ip_addr: 'none'
+
+          # Host-to-guest port forwarding (via the management network NAT interface)
+          forwarded_ports:
+            ssh_alt:
+              host_port: 2222
+              instance_port: 22
+              protocol: tcp
+              auto_correct: true
+            http:
+              host_port: 8080
+              instance_port: 80
+            https:
+              host_port: 8443
+              instance_port: 443
+            dns:
+              host_port: 5353
+              instance_port: 53
+              protocol: udp
+            # Omit host_port for a deterministic auto-generated port.
+            app:
+              instance_port: 3000
+
+        # ── Storage / Filesystem Sync ─────────────────────────────────────────
+        storage:
+          filesystems:
+
+            defaults:
+              owner: root
+              group: root
+              mount_options: "dmode='755',fmode='644'"
+              # Valid values: 'rsync' | 'nfs' | 'sync' | 'file'
+              # 'rsync' and 'nfs' are recommended for libvirt.
+              # 'sync' (vboxsf) requires VirtualBox Guest Additions — not available
+              # on libvirt without additional setup.
+              sync_type: rsync
+              create_instance_path: true
+              prepend_base_directory: false
+              sharedfoldersenablesymlinkscreate: false
+              rsync:
+                auto: true
+                verbose: false
+                privileged: false
+                options:
+                  - '--archive'
+                  - '--copy-links'
+                  - '--delete'
+                  - '--safe-links'
+                exclude:
+                  - '.git/'
+                  - '.vagrant/'
+              nfs:
+                # NFS mount options passed to the guest.
+                mount_options:
+                  - 'rw'
+                  - 'vers=3'
+                  - 'tcp'
+                  - 'nolock'
+                # UID/GID mapping for the mount.  0 maps to root.
+                # :auto lets Vagrant choose based on host user.
+                map_uid: 0
+                map_gid: 0
+                # Use UDP transport instead of TCP.
+                udp: false
+
+            synced_fs_objects:
+
+              # NFS mount — recommended for libvirt for best performance
+              # Host must export the path; Vagrant manages /etc/exports automatically.
+              # Guest must have nfs-common (Debian/Ubuntu) or nfs-utils (RHEL/CentOS).
+              '/vagrant':
+                host_path: '.'
+                instance_path: /vagrant
+                prepend_base_directory: true
+                type: nfs
+                nfs:
+                  mount_options:
+                    - 'rw'
+                    - 'vers=3'
+                    - 'tcp'
+                    - 'nolock'
+                  map_uid: 0
+                  map_gid: 0
+                  udp: false
+
+              # rsync — one-way sync with elevated guest privileges
+              '/etc/puppet':
+                host_path: 'files/etc/puppet'
+                instance_path: /etc/puppet
+                prepend_base_directory: true
+                type: rsync
+                create_instance_path: true
+                rsync:
+                  auto: true
+                  verbose: true
+                  # Appends --rsync-path='sudo rsync' automatically.
+                  privileged: true
+                  options:
+                    - '--archive'
+                    - '--delete'
+                    - '--delete-before'
+                    - '--safe-links'
+                  exclude:
+                    - '.git/'
+
+              # NFS with non-root UID/GID mapping
+              '/home/vagrant/data':
+                host_path: '/data/project'
+                instance_path: /home/vagrant/data
+                prepend_base_directory: false
+                type: nfs
+                create_instance_path: true
+                nfs:
+                  mount_options:
+                    - 'rw'
+                    - 'vers=3'
+                    - 'tcp'
+                    - 'nolock'
+                  # Map to the vagrant user (UID 1000 on most Linux systems).
+                  map_uid: 1000
+                  map_gid: 1000
+                  udp: false
+
+              # Single file copy — provision only
+              '/etc/motd':
+                host_path: 'files/motd'
+                instance_path: /etc/motd
+                prepend_base_directory: true
+                type: file
+
+        # ── Provisioning Commands ─────────────────────────────────────────────
+        commands:
+          defaults:
+            system:
+              # Valid values: 'once' | 'always' | 'never'
+              call_count: once
+              privileged: true
+              # Valid values: 'inline' | 'path'
+              type: inline
+
+          system:
+
+            # Run a host-side script once at provision time
+            selinux:
+              text: files/scripts/os/selinux.sh
+              type: path
+              call_count: once
+              privileged: true
+
+            # Run an inline command on every boot
+            check_resolv:
+              text: "cat /etc/resolv.conf"
+              type: inline
+              call_count: always
+              privileged: false
+
+            # Defined but never executed
+            disabled_example:
+              text: "echo this never runs"
+              type: inline
+              call_count: never

@@ -1,22 +1,13 @@
 #
-# General lookup code for searching for values within a YAML data structure.
-#  (There is likely a better in-Ruby solution for this task.)
+# Safely dig a value out of a nested YAML/Hash structure.
+# Returns nil if any part of the path is missing or the source is empty.
 #
-def lookup_values_yaml(
-  source_yaml,
-  search_array
-)
+def lookup_values_yaml(source, keys)
+  return nil if source.nil? || keys.nil? || keys.empty?
+  return nil unless source.respond_to?(:dig)
+  return nil if source.respond_to?(:empty?) && source.empty?
 
-  if source_yaml.nil? || source_yaml.empty? || search_array.nil? || search_array.empty?
-    return nil
-  end
-
-  dig_results = source_yaml.dig(*search_array)
-
-  if dig_results || (dig_results == false)
-    return dig_results
-  else
-    return nil
-  end
-
+  result = source.dig(*keys)
+  # Preserve explicit false values; treat missing keys (nil) as not found
+  (result.nil? == false || result == false) ? result : nil
 end

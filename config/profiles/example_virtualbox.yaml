@@ -1,0 +1,459 @@
+---
+#
+# config/profiles/example_virtualbox.yaml
+#
+# Reference profile demonstrating every VirtualBox configuration option
+# supported by mimeograph.  Three instances are defined:
+#
+#   vbox-minimal  - smallest valid configuration (7 lines of meaningful YAML)
+#   vbox-typical  - representative development VM
+#   vbox-full     - every supported option shown and documented
+#
+# To use this file as a starting point:
+#   1. Copy it to config/profiles/<your_name>.yaml
+#   2. Copy config/defaults/example_virtualbox.yaml to
+#      config/defaults/<your_name>.yaml and adjust as needed
+#   3. Remove instances and options you do not need
+#
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MINIMAL
+# Boots a named Ubuntu instance.  All other settings come from defaults.yaml.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: vbox-minimal
+  providers:
+    virtualbox:
+      instance:
+        box:
+          name: generic/ubuntu2204
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TYPICAL
+# A representative development VM: custom hardware, private network interface,
+# a forwarded port, rsync, and a provisioning command.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: vbox-typical
+  providers:
+    virtualbox:
+      instance:
+        boot_timeout: 300
+        box:
+          name: generic/ubuntu2204
+          download_insecure: false
+          # linked_clone: true speeds up provisioning but prevents vbox.name from
+          # taking effect — VirtualBox will use a generated name instead.
+          # Set to false if correct VM naming in the VirtualBox GUI is required.
+          linked_clone: false
+          base_mac: ~
+        hostname: vbox-typical.local
+        set_hostname: true
+        communication:
+          display:
+            gui: false
+          ssh:
+            auth_method: keypair
+            username: vagrant
+            insert_key: true
+            forward_agent: false
+            forward_x11: false
+        hardware:
+          cpus: 2
+          memory: 2048
+          modifyvm:
+            "--ioapic": "on"
+            "--vram": "16"
+        networking:
+          interfaces:
+            eth1:
+              ipv4:
+                ip_addr: random
+                octets_slash_24: '192.168.56'
+          forwarded_ports:
+            http:
+              host_port: 8080
+              instance_port: 80
+        storage:
+          filesystems:
+            synced_fs_objects:
+              project:
+                host_path: '.'
+                instance_path: /vagrant
+                prepend_base_directory: true
+                type: rsync
+        commands:
+          system:
+            update:
+              text: "apt-get update -qq && apt-get install -y curl"
+              type: inline
+              call_count: once
+              privileged: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FULL
+# Every supported VirtualBox option shown explicitly with inline documentation.
+# Not all options are needed simultaneously — comment out what you do not use.
+# ─────────────────────────────────────────────────────────────────────────────
+- name: vbox-full
+  providers:
+
+    # ── Provider selection ─────────────────────────────────────────────────────
+    # Only one provider per instance name is supported by Vagrant.
+    defaults:
+      providers:
+        # Whether `vagrant up` (no name) starts this instance.
+        autostart: false
+        # Valid values: 'virtualbox' | 'libvirt' | 'vmware'
+        enabled:
+          - 'virtualbox'
+
+    virtualbox:
+      instance:
+
+        # ── Boot ──────────────────────────────────────────────────────────────
+        autostart: false
+        # Seconds to wait for the VM to boot before erroring.
+        boot_timeout: 600
+
+        # ── Box ───────────────────────────────────────────────────────────────
+        box:
+          # Vagrant Cloud name or local catalog name.
+          # Falls back to the sanitised instance name if omitted.
+          name: generic/ubuntu2204
+          # Direct URL to download the box from.
+          # url: http://internal/boxes/ubuntu2204.box
+          # Skip SSL verification on box download (useful behind corporate proxy).
+          download_insecure: false
+          # Use VirtualBox linked clone: faster provisioning, lower disk usage.
+          # IMPORTANT: When true, Vagrant assigns the VirtualBox display name at
+          # clone time using its default scheme (directory_machinename_timestamp).
+          # vbox.name cannot override this. Set to false if the instance name
+          # must appear correctly in the VirtualBox GUI.
+          linked_clone: false
+          # MAC address for NIC1 (the NAT adapter).
+          # ~ (null) randomises the MAC on each clone — recommended default.
+          # Specify a fixed 12-digit hex value for DHCP reservations or network
+          # policies that key on MAC address.  No separators.
+          # Example: '080027AABBCC'
+          base_mac: ~
+
+        # ── Hostname ──────────────────────────────────────────────────────────
+        # Guest OS hostname.  Defaults to sanitised instance name if omitted.
+        hostname: vbox-full.example.com
+        # Set to false to skip the hostname provisioner.
+        set_hostname: true
+
+        # ── Communication ─────────────────────────────────────────────────────
+        communication:
+          display:
+            # Open the VirtualBox GUI/console on boot.
+            gui: false
+          ssh:
+            # Valid values: 'keypair' | 'password'
+            auth_method: keypair
+            username: vagrant
+            # Only used when auth_method is 'password'.
+            password: vagrant
+            # Replace insecure default Vagrant key with a generated keypair.
+            # Set to false when using password auth.
+            insert_key: true
+            # Forward SSH agent from host into guest.
+            forward_agent: false
+            # Forward X11 display from guest to host.
+            forward_x11: false
+
+        # ── Hardware ──────────────────────────────────────────────────────────
+        hardware:
+          # Virtual CPU count.
+          cpus: 4
+          # RAM in MB.
+          memory: 4096
+
+          # vboxmanage modifyvm parameters.
+          # Key must be a valid vboxmanage --modifyvm flag name.
+          modifyvm:
+            "--ioapic": "on"
+            "--cpuhotplug": "off"
+            "--vram": "64"
+            "--accelerate3d": "off"
+            "--audio": "none"
+            "--usb": "off"
+
+          # vboxmanage setextradata parameters.
+          # Flat string key/value pairs only — nested hashes are not supported
+          # and will be skipped with a WARNING message.
+          setextradata:
+            "VBoxInternal/favorite_color": "blue"
+            "VBoxInternal/best_os": "xubuntu"
+
+        # ── Networking ────────────────────────────────────────────────────────
+        networking:
+
+          # Defaults applied to all interfaces in this instance.
+          defaults:
+            # Let Vagrant configure the interface in the guest.
+            auto_config: true
+            ipv4:
+              # Valid values: static IPv4 | 'random' | 'dhcp' | 'none'
+              #   random - 4th octet derived from instance name + interface index;
+              #            deterministic and stable across reprovisions
+              #   none   - create the interface but do not bring it up on boot
+              ip_addr: random
+              # First three octets used when ip_addr is 'random'.
+              octets_slash_24: '10.0.50'
+              netmask: '255.255.255.0'
+              # MTU set via `ip link set` shell provisioner on every boot.
+              mtu: 1500
+              # Overrides ip_addr resolution to dhcp; set automatically when
+              # ip_addr is 'dhcp'.
+              bootproto: static
+            # Valid values: 'private_network' | 'public_network'
+            zone_class: private_network
+            # NIC hardware emulation.  'virtio' is fastest.
+            # Common alternatives: '82545EM', '82540EM', 'Am79C973'
+            nic_type: virtio
+            # Enable promiscuous mode (allow-all) on all interfaces.
+            promiscuous_mode: false
+            # VirtualBox internal network name.
+            # true  = default internal net name
+            # false = do not use intnet (for host-only or bridged)
+            # String = named internal network
+            virtualbox__intnet: internal
+            bridging:
+              # Substitute all non-loopback host interfaces when listed ones
+              # are not found on the host.
+              auto_correct: false
+            forwarded_ports:
+              # Remap conflicting host ports automatically.
+              auto_correct: true
+              # Valid values: 'tcp' | 'udp' | 'icmp'
+              protocol: tcp
+
+          interfaces:
+
+            # Private network — static IP on a named internal network
+            eth1:
+              ipv4:
+                ip_addr: '10.0.50.10'
+                netmask: '255.255.255.0'
+                mtu: 1500
+              nic_type: virtio
+              zone_class: private_network
+              virtualbox__intnet: mynet
+              auto_config: true
+
+            # Private network — random deterministic IP
+            eth2:
+              ipv4:
+                ip_addr: random
+                octets_slash_24: '10.0.51'
+                netmask: '255.255.255.0'
+              zone_class: private_network
+              promiscuous_mode: true
+              network_name: hostonly1
+              virtualbox__intnet: false
+
+            # Private network — DHCP
+            eth3:
+              ipv4:
+                ip_addr: dhcp
+              zone_class: private_network
+              auto_config: true
+
+            # Public (bridged) network — DHCP with explicit bridge interfaces
+            eth4:
+              ipv4:
+                ip_addr: dhcp
+              zone_class: public_network
+              auto_config: true
+              bridging:
+                # Use all host interfaces when listed ones are not found.
+                auto_correct: true
+                interfaces:
+                  - enp3s0
+                  - wlp2s0
+
+            # Public (bridged) network — static IP
+            eth5:
+              ipv4:
+                ip_addr: '192.168.1.50'
+                netmask: '255.255.255.0'
+              zone_class: public_network
+              auto_config: true
+
+            # Interface with MAC address override
+            eth6:
+              ipv4:
+                ip_addr: random
+                # Per-interface MAC address override for NIC2+.
+                # Format: 12 hex digits, no separators.
+                mac_addr: '080027AABBCC'
+
+            # Interface created but not brought up on boot
+            eth7:
+              ipv4:
+                ip_addr: 'none'
+
+            # Bare interface — all values from networking.defaults
+            eth8:
+
+          # Host-to-guest port forwarding
+          forwarded_ports:
+            ssh_alt:
+              # Explicit host port.
+              host_port: 2222
+              instance_port: 22
+              protocol: tcp
+              auto_correct: true
+            http:
+              host_port: 8080
+              instance_port: 80
+            https:
+              host_port: 8443
+              instance_port: 443
+              auto_correct: false
+            dns:
+              host_port: 5353
+              instance_port: 53
+              protocol: udp
+            # Omit host_port to generate a deterministic port from the
+            # instance name and port name.  Stable across reprovisions.
+            app:
+              instance_port: 3000
+
+        # ── Storage / Filesystem Sync ─────────────────────────────────────────
+        storage:
+          filesystems:
+
+            # Defaults applied to every synced_fs_object unless overridden.
+            defaults:
+              owner: root
+              group: root
+              mount_options: "dmode='755',fmode='644'"
+              # Valid values: 'sync' | 'rsync' | 'nfs' | 'file'
+              sync_type: sync
+              # Create instance_path on the guest if it does not exist.
+              create_instance_path: true
+              # Host path prefix resolution:
+              #   true   - prepend mimeograph root directory
+              #   false  - use host_path as-is
+              #   String - prepend this string to host_path
+              prepend_base_directory: false
+              # Allow symlink creation inside VirtualBox shared folders.
+              sharedfoldersenablesymlinkscreate: false
+              rsync:
+                # Re-sync on `vagrant rsync-auto`.
+                auto: true
+                verbose: false
+                # Run rsync as root on the guest.
+                # Appends --rsync-path='sudo rsync' to options automatically.
+                privileged: false
+                options:
+                  - '--archive'
+                  - '--copy-links'
+                  - '--delete'
+                  - '--safe-links'
+                exclude:
+                  - '.git/'
+                  - '.vagrant/'
+              nfs:
+                mount_options:
+                  - 'rw'
+                  - 'vers=3'
+                  - 'tcp'
+                  - 'nolock'
+                # UID/GID mapping for the NFS mount.  0 maps to root.
+                map_uid: 0
+                map_gid: 0
+                udp: false
+
+            synced_fs_objects:
+
+              # VirtualBox shared folder (vboxsf) — bi-directional, auto-mounted
+              '/vagrant':
+                host_path: '.'
+                instance_path: /vagrant
+                prepend_base_directory: true
+                type: sync
+                owner: vagrant
+                group: vagrant
+                mount_options: "dmode='755',fmode='644'"
+                sharedfoldersenablesymlinkscreate: true
+
+              # rsync — one-way host to guest with custom options
+              '/etc/ansible':
+                host_path: 'files/etc/ansible'
+                instance_path: /etc/ansible
+                prepend_base_directory: true
+                type: rsync
+                create_instance_path: true
+                rsync:
+                  auto: true
+                  verbose: true
+                  # Elevates rsync on the guest; adds --rsync-path='sudo rsync'
+                  privileged: true
+                  options:
+                    - '--archive'
+                    - '--delete'
+                    - '--delete-before'
+                    - '--safe-links'
+                  exclude:
+                    - '.git/'
+                    - '.svn/'
+
+              # NFS — recommended when sync performance matters
+              '/opt/shared':
+                host_path: '/data/shared'
+                instance_path: /opt/shared
+                prepend_base_directory: false
+                type: nfs
+                create_instance_path: true
+                nfs:
+                  mount_options:
+                    - 'rw'
+                    - 'vers=3'
+                    - 'tcp'
+                    - 'nolock'
+                  map_uid: 0
+                  map_gid: 0
+                  udp: false
+
+              # Single file copy — provision only
+              '/etc/motd':
+                host_path: 'files/motd'
+                instance_path: /etc/motd
+                prepend_base_directory: true
+                type: file
+
+        # ── Provisioning Commands ─────────────────────────────────────────────
+        commands:
+
+          # Defaults applied to every command unless overridden per-command.
+          defaults:
+            system:
+              # Valid values: 'once' | 'always' | 'never'
+              call_count: once
+              privileged: true
+              # Valid values: 'path' | 'inline'
+              type: path
+
+          system:
+
+            # Run a host-side script once at provision time
+            selinux:
+              text: files/scripts/os/selinux.sh
+              type: path
+              call_count: once
+              privileged: true
+
+            # Run an inline command on every boot
+            check_resolv:
+              text: "cat /etc/resolv.conf"
+              type: inline
+              call_count: always
+              privileged: false
+
+            # Defined but never executed — useful to disable temporarily
+            disabled_example:
+              text: "echo this never runs"
+              type: inline
+              call_count: never

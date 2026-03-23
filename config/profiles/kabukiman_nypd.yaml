@@ -1,4 +1,7 @@
 ---
+#
+# Kabukiman NYPD instance profiles.
+#
 
 - name: kabukiman
   providers:
@@ -6,7 +9,7 @@
       instance:
         box:
           name: centos_7_x64-upstream
-          url: https://vagrantcloud.com/centos/boxes/7/versions/2020.01/providers/virtualbox.box;
+          url: https://vagrantcloud.com/centos/boxes/7/versions/2020.01/providers/virtualbox.box
         communication:
           ssh:
             username: 'root'
@@ -17,7 +20,6 @@
               call_count: once
               text: 'files/scripts/os/selinux.sh'
               type: 'path'
-
 
 - name: lotus
   providers:
@@ -38,8 +40,3 @@
             gopher:
               host_port: 7070
               instance_port: 70
-        site_settings:
-          package_managers:
-            package_manager: 'dnf'
-            yum:
-              repository_id: 'centos-8-localhost-dnf'

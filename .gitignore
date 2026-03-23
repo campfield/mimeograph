@@ -1,2 +1,6 @@
+archive*
 /sync_directories
 /.vagrant
+*.rpm
+*.deb
+secret-*

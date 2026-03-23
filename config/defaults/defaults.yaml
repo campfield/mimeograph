@@ -1,71 +1,450 @@
 ---
 #
-# Configuration file for the 'default' set of global defaults.
+# config/defaults/defaults.yaml
 #
+# Global default settings applied to every instance profile in every profile
+# group, unless a group-specific defaults file overrides individual values.
+#
+# HOW DEFAULTS WORK
+# -----------------
+# When mimeograph processes a profile group (e.g. config/profiles/bob.yaml)
+# it looks for a matching group defaults file (config/defaults/bob.yaml).
+# If found, bob.yaml is deep-merged ON TOP of this file — bob.yaml only needs
+# to contain values that differ from these globals.  All other values flow
+# through automatically.
+#
+# Resolution order (later wins on conflict):
+#   1. Hardcoded Ruby function defaults
+#   2. This file (defaults.yaml)
+#   3. Group-specific defaults file (e.g. bob.yaml)
+#   4. Per-instance settings in the profile YAML
+#
+# Every key shown here is optional in group/profile files.  Comment out or
+# omit any key to fall back to the value defined here or in Ruby code.
+#
+# ALL OPTIONS ARE SHOWN — copy freely into group defaults or instance profiles.
+#
+
 default_settings:
+
+  # ── Provider selection defaults ────────────────────────────────────────────
   providers:
     defaults:
       providers:
+        # Whether `vagrant up` (no instance name) starts this instance.
         autostart: false
+        # Which provider to use.  Only one provider per instance is supported.
+        # Valid values: 'virtualbox' | 'libvirt' | 'vmware'
         enabled:
           - 'virtualbox'
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # LIBVIRT DEFAULTS
+    # Requires the vagrant-libvirt plugin (install: true in plugins.yaml).
+    # Local KVM/QEMU only — omit host/connect_via_ssh for local connections.
+    # ══════════════════════════════════════════════════════════════════════════
     libvirt:
       instance:
         autostart: false
-        boot_timeout: 0
-        box:
-          name: 'centos/7'
-    virtualbox:
-      instance:
-        autostart: false
-        boot_timeout: 0
-        box:
-          name: centos_7_x64-ethx-vagrant
-          download_insecure: true
-          linked_clone: true
 
+        # Seconds to wait for the VM to boot before Vagrant raises an error.
+        boot_timeout: 300
+
+        # ── Box ───────────────────────────────────────────────────────────────
+        box:
+          # Vagrant Cloud name or local catalog name.
+          name: 'rockylinux/9'
+          # Direct URL to download the box from.
+          # url: 'http://internal/boxes/rocky9-bios-libvirt.box'
+          # Skip SSL verification on box download.
+          download_insecure: false
+          # MAC address for the management network NIC.
+          # null/~ randomises the MAC — recommended default.
+          base_mac: ~
+
+        # ── libvirt Connection ─────────────────────────────────────────────────
+        # Hypervisor driver.  'kvm' requires hardware virtualisation support.
+        # Valid values: 'kvm' | 'qemu'
+        driver: 'kvm'
+        # Primary disk bus type.
+        # Valid values: 'virtio' | 'scsi' | 'ide' | 'sata'
+        disk_bus: 'virtio'
+        # Primary disk cache mode.
+        # Valid values: 'none' | 'writethrough' | 'writeback' | 'directsync' | 'unsafe'
+        disk_cache: 'none'
+        # libvirt storage pool where the box image and snapshots are stored.
+        storage_pool_name: 'default'
+        # Use qemu:///session instead of qemu:///system.
+        # Common on Fedora Workstation; not required on most server distros.
+        qemu_use_session: false
+        # Remote libvirt connection — leave commented for local connections.
+        # host: 'kvm-host.example.com'
+        # connect_via_ssh: true
+        # username: 'libvirt-user'
+        # id_ssh_key_file: '~/.ssh/id_rsa'
+        # socket: '/var/run/libvirt/libvirt-sock'
+        # uri: 'qemu+ssh://user@host/system'
+
+        # ── Hostname ──────────────────────────────────────────────────────────
+        # Guest OS hostname.  Defaults to sanitised instance name if omitted.
+        # hostname: 'myhost.example.com'
+        # Automatically set the guest hostname via shell provisioner on provision.
+        # Set to false to skip and leave hostname management to the guest or other tooling.
+        set_hostname: true
+
+        # ── Communication ─────────────────────────────────────────────────────
+        # libvirt does not use a 'gui' flag — display is configured via
+        # hardware.graphics_type below.
+        communication:
+          ssh:
+            # Authentication method.  Valid values: 'keypair' | 'password'
+            auth_method: 'keypair'
+            # SSH username on the guest.
+            username: 'vagrant'
+            # Password — only used when auth_method is 'password'.
+            password: 'vagrant'
+            # Replace the insecure default Vagrant keypair with a generated one.
+            # Set to false when using password auth or a pre-baked keypair.
+            insert_key: true
+            # Path to a private key file for SSH authentication.
+            # Only set when using a pre-baked keypair instead of Vagrant's insecure key.
+            # private_key_path: '~/.ssh/my_vm_key'
+            # Forward SSH agent from host into guest.
+            forward_agent: false
+            # Forward X11 display from guest to host.
+            forward_x11: false
+
+        # ── Hardware ──────────────────────────────────────────────────────────
+        hardware:
+          # Virtual CPU count.
+          cpus: 2
+          # RAM in MB.
+          memory: 1024
+          # CPU emulation mode.
+          # Valid values: 'host-model' | 'host-passthrough' | 'custom'
+          cpu_mode: 'host-model'
+          # CPU model name — only used when cpu_mode is 'custom'.
+          # cpu_model: 'qemu64'
+          # Enable nested KVM virtualisation.
+          nested: false
+          # Display protocol for the guest console.
+          # Valid values: 'vnc' | 'spice' | 'none'
+          graphics_type: 'vnc'
+          # IP address the graphics socket binds to.
+          graphics_ip: '127.0.0.1'
+          # Boot device order.
+          # Valid values: 'hd' | 'network' | 'cdrom'
+          boot: 'hd'
+          # Additional disks beyond the primary box disk.
+          # Each entry creates an additional storage volume.
+          # disks:
+          #   - size: '20G'
+          #     type: 'qcow2'   # 'qcow2' | 'raw'
+          #     bus: 'virtio'   # 'virtio' | 'scsi' | 'ide'
+          #     cache: 'none'
+
+        # ── Networking ────────────────────────────────────────────────────────
+        networking:
+          defaults:
+            ipv4:
+              # IP address assignment.
+              # Valid values: static IPv4 | 'random' | 'dhcp' | 'none'
+              #   random - deterministic pseudo-random, stable across reprovisions
+              #   none   - create interface but do not bring it up
+              ip_addr: 'random'
+              netmask: '255.255.0.0'
+              # First three octets used when ip_addr is 'random'.
+              octets_slash_24: '10.0.101'
+              # MTU set via `ip link set` shell provisioner on every boot.
+              mtu: '1500'
+            # Network type.
+            # Valid values: 'private_network' | 'public_network'
+            #   private_network - NAT or isolated libvirt network
+            #   public_network  - macvtap bridge to host device (requires 'dev')
+            zone_class: 'private_network'
+            # libvirt network name for private_network interfaces.
+            network_name: 'vagrant-libvirt'
+            # Forwarding mode for auto-created private networks.
+            # Valid values: 'nat' | 'route' | 'none'
+            forward_mode: 'nat'
+            # Enable DHCP on auto-created private networks.
+            dhcp_enabled: true
+            forwarded_ports:
+              auto_correct: true
+              protocol: 'tcp'
+
+        # ── Storage ───────────────────────────────────────────────────────────
+        storage:
+          filesystems:
+            defaults:
+              owner: 'root'
+              group: 'root'
+              mount_options: "dmode='755',fmode='755'"
+              # Default sync type.
+              # Valid values: 'rsync' | 'nfs' | 'sync' | 'file'
+              # 'rsync' is recommended for libvirt; 'sync' requires Guest Additions.
+              sync_type: 'rsync'
+              create_instance_path: true
+              prepend_base_directory: false
+              sharedfoldersenablesymlinkscreate: false
+              rsync:
+                auto: true
+                verbose: false
+                privileged: false
+                options:
+                  - '--archive'
+                  - '--copy-links'
+                  - '--delete'
+                  - '--safe-links'
+                exclude:
+                  - '.git/'
+                  - '.vagrant/'
+              nfs:
+                mount_options:
+                  - 'rw'
+                  - 'vers=3'
+                  - 'tcp'
+                  - 'nolock'
+                map_uid: 0
+                map_gid: 0
+                udp: false
+
+        # ── Provisioning Commands ─────────────────────────────────────────────
         commands:
           defaults:
             system:
-              type: "path"
-              call_count: "once"
+              # How many times to run this command.
+              # Valid values: 'once' | 'always' | 'never'
+              call_count: 'once'
+              # Run with sudo on the guest.
               privileged: true
-              method: "shell"
+              # Command source type.
+              # Valid values: 'inline' | 'path'
+              type: 'inline'
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # VMWARE DEFAULTS
+    # Requires the vagrant-vmware-desktop plugin and the Vagrant VMware Utility.
+    # Compatible with VMware Fusion, Workstation, and Player.
+    # mimeograph YAML key: 'vmware'
+    # Vagrant provider name (internal): 'vmware_desktop'
+    # ══════════════════════════════════════════════════════════════════════════
+    vmware:
+      instance:
+        autostart: false
+        boot_timeout: 300
+
+        # ── Box ───────────────────────────────────────────────────────────────
+        box:
+          # Vagrant Cloud name or local catalog name.
+          # Falls back to the instance name if omitted.
+          # name: 'generic/ubuntu2204'
+          # url: 'http://internal/boxes/ubuntu2204-vmware.box'
+          download_insecure: false
+          # Use VMware linked clone.  Faster provisioning, lower disk usage.
+          # Note: the VirtualBox linked clone naming issue does not apply to VMware.
+          linked_clone: false
+          # MAC address of the first (NAT) NIC.
+          # nil randomises the MAC on each clone.
+          base_mac: ~
+
+        # ── VMware-specific settings ───────────────────────────────────────────
+        # Verify vmnet device health before booting.
+        verify_vmnet: true
+        # Path where VMware stores the linked clone.
+        # Defaults to ./.vagrant/machines/<name>/vmware_desktop/
+        # clone_directory: '/fast/ssd/vms'
+        # Host vmnet device for the NAT NIC.
+        # Defaults to auto-detected (usually vmnet8 on Workstation).
+        # nat_device: 'vmnet8'
+
+        # ── Hostname ──────────────────────────────────────────────────────────
+        # Guest OS hostname.  Defaults to sanitised instance name if omitted.
+        # hostname: 'myhost.example.com'
+        # Automatically set the guest hostname via shell provisioner on provision.
+        # Set to false to skip and leave hostname management to the guest or other tooling.
+        set_hostname: true
+
+        # ── Communication ─────────────────────────────────────────────────────
         communication:
           display:
+            # Open the VMware GUI/console on boot.
             gui: false
-
           ssh:
-            forward_agent: true
-            forward_x11: true
-            insert_key: false
-            #password: 'hashicorp'
-            password: 'vagrant'
-            username: 'root'
             auth_method: 'keypair'
+            username: 'vagrant'
+            password: 'vagrant'
+            insert_key: true
+            # private_key_path: '~/.ssh/my_vm_key'
+            forward_agent: false
+            forward_x11: false
 
+        # ── Hardware ──────────────────────────────────────────────────────────
         hardware:
           cpus: 2
           memory: 1024
+          # VMX key/value pairs written directly to the .vmx file.
+          # Keys and values are always strings in VMX.
+          # Set a key to null (~) to remove it from the .vmx file.
+          # Common keys:
+          #   displayname           - VM name shown in the VMware UI
+          #   vhv.enable            - nested virtualisation ('TRUE'/'FALSE')
+          #   cpuid.coresPerSocket  - cores per socket layout
+          #   mks.enable3d          - 3D acceleration ('TRUE'/'FALSE')
+          #   usb.present           - USB controller ('TRUE'/'FALSE')
+          #   sound.present         - Sound device ('TRUE'/'FALSE')
+          vmx: {}
+
+        # ── Networking ────────────────────────────────────────────────────────
+        networking:
+          defaults:
+            ipv4:
+              ip_addr: 'random'
+              netmask: '255.255.0.0'
+              octets_slash_24: '10.0.101'
+              mtu: '1500'
+            # Valid values: 'private_network' | 'public_network'
+            #   private_network - VMware host-only VMnet adapter
+            #   public_network  - VMware bridged adapter
+            zone_class: 'private_network'
+            forwarded_ports:
+              auto_correct: true
+              protocol: 'tcp'
+
+        # ── Storage ───────────────────────────────────────────────────────────
+        storage:
+          filesystems:
+            defaults:
+              owner: 'root'
+              group: 'root'
+              mount_options: "dmode='755',fmode='755'"
+              # 'rsync' is recommended for VMware; native shared folders
+              # require VMware Tools and are not managed by mimeograph.
+              sync_type: 'rsync'
+              create_instance_path: true
+              prepend_base_directory: false
+              sharedfoldersenablesymlinkscreate: false
+              rsync:
+                auto: true
+                verbose: false
+                privileged: false
+                options:
+                  - '--archive'
+                  - '--copy-links'
+                  - '--delete'
+                  - '--safe-links'
+                exclude:
+                  - '.git/'
+                  - '.vagrant/'
+
+        # ── Provisioning Commands ─────────────────────────────────────────────
+        commands:
+          defaults:
+            system:
+              call_count: 'once'
+              privileged: true
+              type: 'inline'
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # VIRTUALBOX DEFAULTS
+    # No additional plugins required.
+    # ══════════════════════════════════════════════════════════════════════════
+    virtualbox:
+      instance:
+        autostart: false
+        boot_timeout: 240
+
+        # ── Box ───────────────────────────────────────────────────────────────
+        box:
+          # Vagrant Cloud name or local catalog name.
+          # Falls back to the instance name if omitted.
+          name: 'rocky9-bios-virtualbox'
+          # Direct URL to download the box from.
+          # url: 'http://internal/boxes/rocky9-bios-virtualbox.box'
+          # Skip SSL verification on box download.
+          download_insecure: true
+          # Use VirtualBox linked clone.
+          # IMPORTANT: When linked_clone is true, Vagrant assigns the VirtualBox
+          # VM display name at clone time using its own default scheme
+          # (directory_machinename_timestamp_random). The vbox.name setting cannot
+          # override this. Set to false if correct VM naming in the VirtualBox GUI
+          # is required. Full clones are slower and use more disk space.
+          linked_clone: false
+          # MAC address for the first (NAT) NIC — NIC1 in VirtualBox.
+          # null/~ randomises the MAC on each clone or import.
+          # Specify a fixed value for DHCP reservations or network policies
+          # that key on MAC address.  Format: 12 hex digits, no separators.
+          base_mac: ~
+
+        # ── Hostname ──────────────────────────────────────────────────────────
+        # Guest OS hostname.  Defaults to sanitised instance name if omitted.
+        # hostname: 'myhost.example.com'
+        # Automatically set the guest hostname via shell provisioner on provision.
+        # Set to false to skip and leave hostname management to the guest or other tooling.
+        set_hostname: true
+
+        # ── Communication ─────────────────────────────────────────────────────
+        communication:
+          display:
+            # Start the VirtualBox GUI/console on boot.
+            gui: false
+          ssh:
+            # Authentication method.  Valid values: 'keypair' | 'password'
+            auth_method: 'keypair'
+            username: 'root'
+            password: 'vagrant'
+            # Replacing the key requires key-based auth to succeed first.
+            # Set to false when using password auth.
+            insert_key: false
+            # private_key_path: '~/.ssh/my_vm_key'
+            forward_agent: true
+            forward_x11: false
+
+        # ── Hardware ──────────────────────────────────────────────────────────
+        hardware:
+          cpus: 2
+          memory: 1024
+          # vboxmanage modifyvm parameters.  Key must be a valid --modifyvm flag.
           modifyvm:
             "--ioapic": "on"
             "--vram": "64"
+          # vboxmanage setextradata parameters.  Flat string key/value pairs only.
+          # Nested hashes are not supported and will be skipped with a warning.
+          # setextradata:
+          #   "VBoxInternal/key": "value"
 
+        # ── Networking ────────────────────────────────────────────────────────
         networking:
           defaults:
             auto_config: true
             ipv4:
-              bootproto: 'static'
+              # Valid values: static IPv4 | 'random' | 'dhcp' | 'none'
               ip_addr: 'random'
-              mtu: 9000
-              netmask: '255.255.0.0'
+              # First three octets for random IP generation.
               octets_slash_24: '10.0.101'
-            forward_port_auto_correct: true
-            forward_port_protocol: 'tcp'
-            nic_type: 'virtio'
-            promiscuous_mode: false
-            virtualbox__intnet: 'internal'
+              netmask: '255.255.0.0'
+              # Static/none bootproto.  Overridden to 'dhcp' when ip_addr is 'dhcp'.
+              bootproto: 'static'
+              # MTU set via `ip link set` shell provisioner on every boot.
+              mtu: 9000
+            # Valid values: 'private_network' | 'public_network'
             zone_class: 'private_network'
+            # NIC emulation type.  'virtio' is fastest; '82545EM' for broader compat.
+            nic_type: 'virtio'
+            # Enable promiscuous mode (captures all traffic on the segment).
+            promiscuous_mode: false
+            # VirtualBox internal network name.
+            # true uses the default name; a string names a specific internal net.
+            virtualbox__intnet: 'internal'
+            bridging:
+              # Use all host interfaces when specified ones are not found.
+              auto_correct: false
+            forwarded_ports:
+              auto_correct: true
+              protocol: 'tcp'
+
+          # Instance-level (non-default) forwarded ports applied to all instances
+          # in this group unless overridden in the profile.
           forwarded_ports:
             http:
               instance_port: 80
@@ -74,29 +453,52 @@ default_settings:
               instance_port: 443
               host_port: 8443
 
-        site_settings:
-          package_managers:
-            defaults:
-              package_manager: 'none'
-              yum:
-                repository_id: 'none'
-
+        # ── Storage ───────────────────────────────────────────────────────────
         storage:
           filesystems:
             defaults:
+              owner: 'root'
               group: 'root'
               mount_options: "dmode='755',fmode='755'"
-              owner: 'root'
+              # Default sync type.
+              # Valid values: 'sync' | 'rsync' | 'nfs' | 'file'
+              sync_type: 'sync'
+              create_instance_path: true
               prepend_base_directory: false
               sharedfoldersenablesymlinkscreate: true
-              sync_type: 'sync'
               rsync:
+                auto: true
                 verbose: false
+                privileged: false
+                options:
+                  - '--archive'
+                  - '--copy-links'
+                  - '--delete'
+                  - '--safe-links'
+                exclude:
+                  - '.git/'
+                  - '.vagrant/'
+              nfs:
+                mount_options:
+                  - 'rw'
+                  - 'vers=3'
+                  - 'tcp'
+                  - 'nolock'
+                map_uid: 0
+                map_gid: 0
+                udp: false
+
+            # Default synced folder applied to all instances in this group.
             synced_fs_objects:
-              '/var/tmp':
-                'host_path': '/var/tmp'
-                'instance_path': '/opt/var_tmp_host'
               '/vagrant':
-                'host_path': 'sync_directories'
-                'instance_path': '/vagrant'
-                'prepend_base_directory': true
+                host_path: 'sync_directories'
+                instance_path: '/vagrant'
+                prepend_base_directory: true
+
+        # ── Provisioning Commands ─────────────────────────────────────────────
+        commands:
+          defaults:
+            system:
+              call_count: 'once'
+              privileged: true
+              type: 'path'

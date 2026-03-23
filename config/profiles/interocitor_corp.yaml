@@ -1,4 +1,7 @@
 ---
+#
+# Interocitor Corp instance profiles.
+#
 
 - name: exeter
   providers:
@@ -7,7 +10,6 @@
         box:
           name: metaluna_project_virtbox
           url: http://localhost/vm_exports/metaluna_project_virtbox.box
-
         commands:
           system:
             "mind_control_enable":
@@ -22,11 +24,9 @@
       instance:
         box:
           name: esu_16
-
         commands:
           system:
             "intensifier_rotate":
               call_count: "once"
               text: "files/scripts/interocitor/rotate.sh"
               type: "path"
-

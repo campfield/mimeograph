@@ -1,0 +1,54 @@
+---
+#
+# config/profiles/puppet.yaml
+#
+
+
+- name: puppet
+  providers:
+    virtualbox:
+      instance:
+        box:
+          name: rocky9-bios-virtualbox
+
+        storage:
+          filesystems:
+            synced_fs_objects:
+              '/etc/puppetlabs/code/environments/production':
+                prepend_base_directory: false
+                host_path: '/home/campfieldm/personal/development/puppet'
+                instance_path: '/etc/puppetlabs/code/environments/production'
+                type: sync
+
+        commands:
+          system:
+            "puppet-server-testbed":
+              call_count: "always"
+              privileged: true
+              text: "/vagrant/files/puppet-vagrant/puppet-server-testbed.sh -r /vagrant/files/packages/puppet-release.rpm"
+              type: "inline"
+            "puppet-conf-set-legacy-options":
+              call_count: "always"
+              privileged: true
+              text: "/vagrant/files/puppet-vagrant/puppet-set-legacy-options.sh"
+              type: "inline"
+
+- name: gitlab
+  providers:
+    virtualbox:
+      instance:
+        box:
+          name: rocky9-bios-virtualbox
+
+        commands:
+          system:
+            "puppet-agent-testbed":
+              call_count: "always"
+              privileged: true
+              text: "/vagrant/files/puppet-vagrant/puppet-agent-testbed.sh -r /vagrant/files/packages/puppet-release.rpm"
+              type: "inline"
+            "puppet-conf-set-legacy-options":
+              call_count: "always"
+              privileged: true
+              text: "/vagrant/files/puppet-vagrant/puppet-set-legacy-options.sh"
+              type: "inline"

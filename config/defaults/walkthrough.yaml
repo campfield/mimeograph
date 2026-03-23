@@ -1,4 +1,5 @@
 ---
 #
-# Default settings through the walkthrough profiles, intentionally empty.
+# Default settings for the walkthrough profile group.
+# Intentionally empty - uses global defaults.yaml.
 #

@@ -1,26 +1,18 @@
 #
-# Print a mesage to stdout with a prefix title.
-#  The message_titles_display is awkward and should be rewritten.
+# Print a formatted message to stdout.
+# Only messages whose title appears in display_levels are shown.
 #
 def handle_message(
   message,
-  message_title = "INFO",
-  message_titles_display = [
-    "ERROR",
-    "INFO",
-    "WARNING"
-  ]
+  title  = 'INFO',
+  display_levels = %w[ERROR INFO WARNING]
 )
-  if !message_title.nil?
-    return unless message_titles_display.include?(message_title)
-  else
-    message_title = "ERR_NO_TITLE"
-  end
+  title = title.to_s.upcase
+  return unless display_levels.include?(title)
 
-  if message.nil? or message.empty?
-    puts "[ERROR]: no message passed to function [handle_message]."
+  if message.nil? || message.to_s.empty?
+    puts '[ERROR]: handle_message called with no message.'
   else
-    puts "[#{message_title}]: #{message}"
+    puts "[#{title}]: #{message}"
   end
-
 end

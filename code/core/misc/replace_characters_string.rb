@@ -1,29 +1,12 @@
 #
-# Bland functionfor replacing characters that can cause issues in filenames, VM names, and hostnames.
+# Replace characters that cause problems in VM names, hostnames, and filenames.
 #
 def replace_characters_string(
   source_string,
-  conversion_hashes = {
-    ' ' => '-',
-    '/' => '-',
-    '_' => '-',
-  }
+  replacements = { ' ' => '-', '/' => '-', '_' => '-' }
 )
-
-  target_string = nil
-
-  if source_string
-    if !source_string.is_a? String
-      target_string = source_string.dup.to_s
-    else
-      target_string = source_string.dup
-    end
-
-    conversion_hashes.each do |original, target|
-      target_string.gsub!(original, target)
-    end
-  end
-
-  target_string
-
+  return nil unless source_string
+  result = source_string.to_s.dup
+  replacements.each { |from, to| result.gsub!(from, to) }
+  result
 end

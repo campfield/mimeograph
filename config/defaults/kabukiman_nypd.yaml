@@ -1,4 +1,5 @@
 ---
 #
-# Sgt. Kabukiman utilizes no default settings.
+# Default settings for the kabukiman_nypd profile group.
+# Intentionally empty - uses global defaults.yaml.
 #

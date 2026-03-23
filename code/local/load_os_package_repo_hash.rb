@@ -1,79 +1,61 @@
 #
-# site_settings-based function to generate the stanza type for file copying (defaults to rsync)
-#  from the host into the instance's OS-specific package repository list (YUM, Apt, etc).
+# Generate a synced_fs_objects-compatible hash for syncing OS package manager
+# repository configuration files from the host into the instance.
+#
+# Supports: yum, dnf (both use /etc/yum.repos.d)
+#
+# Expected site_settings structure in instance profile:
+#
+#   site_settings:
+#     package_managers:
+#       package_manager: yum       # or dnf
+#       defaults:
+#         package_manager: yum     # fallback
+#         yum:
+#           repository_id: centos-7-upstream
 #
 def load_os_package_repo_hash(
   instance_profile,
-  provider = 'virtualbox',
+  provider               = 'virtualbox',
   package_manager_default = 'none',
-  prepend_base_directory = true,
-  repository_id_default = 'none',
-  rsync__options = [
-    '-a',
-    '--delete',
-    '--verbose'
-  ],
-  sync_type = 'rsync'
+  repository_id_default   = 'none',
+  rsync_options           = %w[-a --delete --verbose],
+  sync_type               = 'rsync'
 )
-
-  repository_hash = nil
-
   provider_info = lookup_values_yaml(instance_profile, ['providers', provider])
+  return nil unless provider_info
 
-  case provider
-  when 'virtualbox'
-    package_manager = [
-      lookup_values_yaml(provider_info, ['instance', 'site_settings', 'package_managers', 'package_manager']),
-      lookup_values_yaml(provider_info, ['instance', 'site_settings', 'package_managers', 'defaults', 'package_manager']),
-      package_manager_default
-    ].find { |i| !i.nil? }
+  package_manager = [
+    lookup_values_yaml(provider_info, ['instance', 'site_settings', 'package_managers', 'package_manager']),
+    lookup_values_yaml(provider_info, ['instance', 'site_settings', 'package_managers', 'defaults', 'package_manager']),
+    package_manager_default
+  ].find { |v| !v.nil? }
 
-    repository_id = [
-      lookup_values_yaml(provider_info, ['instance', 'site_settings', 'package_managers', package_manager, 'repository_id']),
-      lookup_values_yaml(provider_info, ['instance', 'site_settings', 'package_managers', 'defaults', package_manager, 'repository_id']),
-      repository_id_default
-    ].find { |i| !i.nil? } if package_manager
+  return nil if package_manager == 'none'
 
-    case package_manager
-    when 'none'
-      # No package manager specified ignore repository sync setup.
-    when 'dnf'
-      case repository_id
-      when 'none'
-        # No repository specified ignore repository sync setup.
-      else
-        repository_hash = {
-          '/etc/yum.repos.d' => {
-            'host_path' => "files/os/package_managers/#{package_manager}/yum.repos.d/#{repository_id}",
-            'instance_path' => '/etc/yum.repos.d',
-            'rsync__options' => rsync__options,
-            'rsync__verbose' => true,
-            'prepend_base_directory' => true,
-            'type' => sync_type
-          }
-        }
-        repository_hash
-      end
-    when 'yum'
-      case repository_id
-      when 'none'
-        # No repository specified ignore repository sync setup.
-      else
-        repository_hash = {
-          '/etc/yum.repos.d' => {
-            'host_path' => "files/os/package_managers/#{package_manager}/yum.repos.d/#{repository_id}",
-            'instance_path' => '/etc/yum.repos.d',
-            'rsync__options' => rsync__options,
-            'rsync__verbose' => true,
-            'prepend_base_directory' => true,
-            'type' => sync_type
-          }
-        }
-        repository_hash
-      end
-    else
-      exit_with_message("package_manager [#{package_manager}] not supported.")
-    end
+  repository_id = [
+    lookup_values_yaml(provider_info, ['instance', 'site_settings', 'package_managers', package_manager, 'repository_id']),
+    lookup_values_yaml(provider_info, ['instance', 'site_settings', 'package_managers', 'defaults', package_manager, 'repository_id']),
+    repository_id_default
+  ].find { |v| !v.nil? }
+
+  return nil if repository_id == 'none'
+
+  case package_manager
+  when 'yum', 'dnf'
+    {
+      '/etc/yum.repos.d' => {
+        'host_path'              => "files/os/package_managers/#{package_manager}/yum.repos.d/#{repository_id}",
+        'instance_path'          => '/etc/yum.repos.d',
+        'rsync'                  => {
+          'options' => rsync_options,
+          'verbose' => true
+        },
+        'prepend_base_directory' => true,
+        'type'                   => sync_type
+      }
+    }
+  else
+    exit_with_message("package_manager [#{package_manager}] is not supported.")
   end
-  repository_hash
 end

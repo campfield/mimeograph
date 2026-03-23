@@ -1,69 +1,58 @@
 #
-# Configure network interfaces for VirtualBox.
+# Configure network interfaces for a VirtualBox instance.
+#
+# Fixes applied vs original:
+#   - bare `static` constant replaced with the string 'static'
+#   - bridge interface intersection check corrected (& operator)
+#   - `ip link` parsing cleaned up; .select no-op removed
+#   - interface provisioner name variables made local (were globals)
 #
 def configure_interfaces(
   machine,
   name,
   instance_networking,
-  auto_config_default = true,
-  bootproto_default = 'static',
-  bridge_auto_correct_default = false,
-  bridge_interfaces_default = [],
-  ip_addr_ipv4_default = 'random',
-  mtu_ipv4_default = '1500',
-  netmask_ipv4_default = '255.255.0.0',
-  network_name_default = nil,
-  nic_type_default = 'virtio',
+  auto_config_default          = true,
+  bootproto_default            = 'static',
+  bridge_auto_correct_default  = false,
+  bridge_interfaces_default    = [],
+  ip_addr_ipv4_default         = 'random',
+  mtu_ipv4_default             = '1500',
+  netmask_ipv4_default         = '255.255.0.0',
+  nic_type_default             = 'virtio',
   octets_slash_24_ipv4_default = '172.16.0',
-  promiscuous_mode_default = false,
-  provider = 'virtualbox',
-  virtualbox__intnet_default = true,
-  zone_class_default = 'private_network',
-  zone_classes = [
-    'private_network',
-    'public_network'
-  ]
+  promiscuous_mode_default     = false,
+  provider                     = 'virtualbox',
+  virtualbox__intnet_default   = true,
+  zone_class_default           = 'private_network',
+  valid_zone_classes           = %w[private_network public_network]
 )
-
   base_address = [
     lookup_values_yaml(instance_networking, ['base_address']),
     lookup_values_yaml(instance_networking, ['defaults', 'base_address'])
-  ].find { |i| !i.nil? }
-
+  ].find { |v| !v.nil? }
   machine.vm.base_address = base_address if base_address
 
   interfaces_instance = lookup_values_yaml(instance_networking, ['interfaces'])
-
   return false unless interfaces_instance
 
-  interfaces_instance.each.with_index(1) do |(interface_name, interface_info), index|
+  interfaces_instance.each_with_index do |(interface_name, interface_info), idx|
+    interface_info  ||= {}
+    interface_index   = idx + 2   # NIC index in VirtualBox is 1-based; NIC1 is the NAT adapter
 
-    interface_index = index + 1
-
-    nic_type = [
-      lookup_values_yaml(interface_info, ['nic_type']),
-      lookup_values_yaml(instance_networking, ['defaults', 'nic_type']),
-      nic_type_default
-    ].find { |i| !i.nil? }
-
-    mtu_ipv4 = [
-      lookup_values_yaml(interface_info, ['ipv4', 'mtu']),
-      lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'mtu']),
-      mtu_ipv4_default
-    ].find { |i| !i.nil? }
-
-    mac_addr_ipv4 = lookup_values_yaml(interface_info, ['ipv4', 'mac_addr'])
-    if mac_addr_ipv4
+    # ── MAC address ────────────────────────────────────────────────────────────
+    mac_addr = lookup_values_yaml(interface_info, ['ipv4', 'mac_addr'])
+    if mac_addr
       machine.vm.provider provider do |vbox|
-        vbox.customize ['modifyvm', :id, "--macaddress#{interface_index}", mac_addr_ipv4]
+        vbox.customize ['modifyvm', :id, "--macaddress#{interface_index}", mac_addr]
       end
     end
 
+    # ── Promiscuous mode ───────────────────────────────────────────────────────
     promiscuous_mode = [
       lookup_values_yaml(interface_info, ['promiscuous_mode']),
       lookup_values_yaml(instance_networking, ['defaults', 'promiscuous_mode']),
       promiscuous_mode_default
-    ].find { |i| !i.nil? }
+    ].find { |v| !v.nil? }
     validate_value(promiscuous_mode)
 
     if promiscuous_mode
@@ -72,142 +61,175 @@ def configure_interfaces(
       end
     end
 
-    octets_slash_24_ipv4 = [
+    # ── Per-interface resolved values ──────────────────────────────────────────
+    nic_type = [
+      lookup_values_yaml(interface_info, ['nic_type']),
+      lookup_values_yaml(instance_networking, ['defaults', 'nic_type']),
+      nic_type_default
+    ].find { |v| !v.nil? }
+
+    mtu_ipv4 = [
+      lookup_values_yaml(interface_info, ['ipv4', 'mtu']),
+      lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'mtu']),
+      mtu_ipv4_default
+    ].find { |v| !v.nil? }
+
+    octets_slash_24 = [
       lookup_values_yaml(interface_info, ['ipv4', 'octets_slash_24']),
       lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'octets_slash_24']),
       octets_slash_24_ipv4_default
-    ].find { |i| !i.nil? }
+    ].find { |v| !v.nil? }
 
-    ip_addr_ipv4 = [
+    ip_addr = [
       lookup_values_yaml(interface_info, ['ipv4', 'ip_addr']),
       lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'ip_addr']),
       ip_addr_ipv4_default
-    ].find { |i| !i.nil? }
+    ].find { |v| !v.nil? }
+
+    netmask = [
+      lookup_values_yaml(interface_info, ['ipv4', 'netmask']),
+      lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'netmask']),
+      netmask_ipv4_default
+    ].find { |v| !v.nil? }
+
+    bootproto = [
+      lookup_values_yaml(interface_info, ['ipv4', 'bootproto']),
+      lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'bootproto']),
+      bootproto_default
+    ].find { |v| !v.nil? }
 
     auto_config = [
       lookup_values_yaml(interface_info, ['auto_config']),
       lookup_values_yaml(instance_networking, ['defaults', 'auto_config']),
       auto_config_default
-    ].find { |i| !i.nil? }
+    ].find { |v| !v.nil? }
     validate_value(auto_config)
 
     zone_class = [
       lookup_values_yaml(interface_info, ['zone_class']),
       lookup_values_yaml(instance_networking, ['defaults', 'zone_class']),
       zone_class_default
-    ].find { |i| !i.nil? }
-    validate_value(zone_class, zone_classes)
+    ].find { |v| !v.nil? }
+    validate_value(zone_class, valid_zone_classes)
 
     virtualbox__intnet = [
       lookup_values_yaml(interface_info, ['virtualbox__intnet']),
       lookup_values_yaml(instance_networking, ['defaults', 'virtualbox__intnet']),
       virtualbox__intnet_default
-    ].find { |i| !i.nil? }
-
-    netmask_ipv4 = [
-      lookup_values_yaml(interface_info, ['ipv4', 'netmask']),
-      lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'netmask']),
-      netmask_ipv4_default
-    ].find { |i| !i.nil? }
-
-    bootproto = [
-      lookup_values_yaml(interface_info, ['ipv4', 'bootproto']),
-      lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'bootproto']),
-      bootproto_default
-    ].find { |i| !i.nil? }
+    ].find { |v| !v.nil? }
 
     network_name = [
       lookup_values_yaml(interface_info, ['network_name']),
       lookup_values_yaml(instance_networking, ['defaults', 'network_name']),
       virtualbox__intnet
-    ].find { |i| !i.nil? }
+    ].find { |v| !v.nil? }
 
-    if ip_addr_ipv4
-      case ip_addr_ipv4
-      when Resolv::IPv4::Regex
-        # do nothing
-      when 'random'
-        name_hash = Random.new(Digest::MD5.hexdigest("#{name} #{interface_index}").to_i(16)).rand(40..252)
-        ip_addr_ipv4 = "#{octets_slash_24_ipv4}." + name_hash.to_s
-      when 'dhcp'
-        bootproto = 'dhcp'
-      when 'none'
-        bootproto = 'none'
-        name_hash = Random.new(Digest::MD5.hexdigest("#{name} #{interface_index}").to_i(16)).rand(40..252)
-        ip_addr_ipv4 = '127.0.0.' + name_hash.to_s
-      else
-        exit_with_message("ip_addr_ipv4 [#{ip_addr_ipv4}] value invalid.")
+    # ── Resolve ip_addr to a concrete address or mode ─────────────────────────
+    case ip_addr
+    when Resolv::IPv4::Regex
+      # already a static address, nothing to do
+    when 'random'
+      random_octet = Random.new(Digest::MD5.hexdigest("#{name} #{interface_index}").to_i(16)).rand(40..252)
+      ip_addr      = "#{octets_slash_24}.#{random_octet}"
+    when 'dhcp'
+      bootproto = 'dhcp'
+    when 'none'
+      bootproto = 'none'
+      random_octet = Random.new(Digest::MD5.hexdigest("#{name} #{interface_index}").to_i(16)).rand(40..252)
+      ip_addr      = "127.0.0.#{random_octet}"
+    when nil
+      if interface_info.nil? || interface_info.empty?
+        bootproto = bootproto_default
+        zone_class = zone_class_default
       end
-    elsif interface_info.nil? || interface_info.empty?
-      bootproto = bootproto_default
-      zone_class = zone_class_default
+    else
+      exit_with_message("ip_addr value [#{ip_addr}] for interface [#{interface_name}] on instance [#{name}] is not valid.")
     end
 
+    # ── Add the network to Vagrant ─────────────────────────────────────────────
     case zone_class
     when 'public_network'
-      interfaces_host = `ip link sh`.scan(/^\d+: (.*):/).flatten.select.sort
+      # Enumerate host interfaces, excluding loopback
+      interfaces_host = `ip -o link show`.scan(/^\d+: ([^:@\s]+)/).flatten.sort
       interfaces_host.delete('lo')
 
       bridge_interfaces = [
         lookup_values_yaml(interface_info, ['bridging', 'interfaces']),
         lookup_values_yaml(instance_networking, ['defaults', 'bridging', 'interfaces']),
         bridge_interfaces_default
-      ].find { |i| !i.nil? }
+      ].find { |v| !v.nil? }
 
       bridge_auto_correct = [
         lookup_values_yaml(interface_info, ['bridging', 'auto_correct']),
         lookup_values_yaml(instance_networking, ['defaults', 'bridging', 'auto_correct']),
         bridge_auto_correct_default
-      ].find { |i| !i.nil? }
+      ].find { |v| !v.nil? }
       validate_value(bridge_auto_correct)
 
-      if !bridge_interfaces.include?(interfaces_host)
-        bridge_interfaces_joined = bridge_interfaces.join(', ')
-        if bridge_interfaces.empty? or bridge_interfaces.nil?
-          bridge_interfaces_joined = "NOT_DEFINED"
-        end
+      # Check whether any of the specified bridge interfaces exist on the host.
+      # Only enforce this for instances that are actively being managed in the
+      # current Vagrant invocation — skip silently for inactive instances so
+      # that `vagrant up myvm` does not error on bridge config belonging to
+      # other VMs that are not being started.
+      matching_interfaces = bridge_interfaces & interfaces_host
 
-        if bridge_auto_correct == true
-          interfaces_host_joined = interfaces_host.join(', ')
-          handle_message("instance [#{name}] no host bridge interface matching specified [#{bridge_interfaces_joined}] interface [#{interface_name}], autocorrecting to use host interfaces [#{interfaces_host_joined}].", "WARNING")
+      if matching_interfaces.empty? && active_machine?(name)
+        listed = bridge_interfaces.empty? ? 'NOT_DEFINED' : bridge_interfaces.join(', ')
+
+        if bridge_auto_correct
+          handle_message(
+            "instance [#{name}] interface [#{interface_name}]: no matching bridge interface " \
+            "from [#{listed}] found on host. Auto-correcting to use host interfaces [#{interfaces_host.join(', ')}].",
+            'WARNING'
+          )
           bridge_interfaces = interfaces_host
         else
-          if bridge_interfaces_joined
-            exit_with_message("instance [#{name}] no host bridge interface(s) matching specified [#{bridge_interfaces_joined}] were specified for interface [#{interface_name}].  Setting bridges to auto_correct to 'true' will attempt to utilize system interfaces.")
-          else
-            exit_with_message("instance [#{name}] no host bridge interface(s) were specified interface [#{interface_name}].  Setting bridges to auto_correct to 'true' will attempt to utilize system interfaces.")
-          end
+          exit_with_message(
+            "instance [#{name}] interface [#{interface_name}]: no host bridge interface " \
+            "matching [#{listed}] was found. Set auto_correct: true to use all host interfaces automatically."
+          )
         end
       end
 
       case bootproto
       when 'dhcp'
-        machine.vm.network zone_class, auto_config: auto_config, nic_type: nic_type, type: bootproto, bridge: bridge_interfaces
+        machine.vm.network zone_class,
+          auto_config: auto_config, nic_type: nic_type,
+          type: 'dhcp', bridge: bridge_interfaces
       when 'static'
-        machine.vm.network zone_class, ip: ip_addr_ipv4, auto_config: auto_config, nic_type: nic_type, netmask: netmask_ipv4, bridge: bridge_interfaces
+        machine.vm.network zone_class,
+          ip: ip_addr, auto_config: auto_config, nic_type: nic_type,
+          netmask: netmask, bridge: bridge_interfaces
       when 'none'
-        machine.vm.network zone_class, auto_config: false, nic_type: nic_type, type: static, bridge: bridge_interfaces
+        machine.vm.network zone_class,
+          auto_config: false, nic_type: nic_type,
+          type: 'static', bridge: bridge_interfaces
       end
+
     when 'private_network'
       case bootproto
       when 'dhcp'
-        machine.vm.network zone_class, auto_config: auto_config, virtualbox__intnet: virtualbox__intnet, nic_type: nic_type, type: bootproto, name: network_name
+        machine.vm.network zone_class,
+          auto_config: auto_config, nic_type: nic_type,
+          type: 'dhcp', virtualbox__intnet: virtualbox__intnet, name: network_name
       when 'static'
-        machine.vm.network zone_class, ip: ip_addr_ipv4, auto_config: auto_config, nic_type: nic_type, virtualbox__intnet: virtualbox__intnet, netmask: netmask_ipv4
+        machine.vm.network zone_class,
+          ip: ip_addr, auto_config: auto_config, nic_type: nic_type,
+          virtualbox__intnet: virtualbox__intnet, netmask: netmask, name: network_name
       when 'none'
-        machine.vm.network zone_class, auto_config: false, nic_type: nic_type, virtualbox__intnet: virtualbox__intnet, netmask: netmask_ipv4
+        machine.vm.network zone_class,
+          auto_config: false, nic_type: nic_type,
+          virtualbox__intnet: virtualbox__intnet, netmask: netmask, name: network_name
       end
-    else
-      exit_with_message("zone_class [#{zone_class}] value invalid.")
     end
 
+    # ── Bring up interface and set MTU on every boot ───────────────────────────
     if bootproto != 'none'
-      $interface_ifup_command = "sudo ifup #{interface_name}"
-      machine.vm.provision 'shell', inline: $interface_ifup_command, name: $interface_ifup_command, run: 'always'
+      ifup_cmd = "sudo ifup #{interface_name}"
+      mtu_cmd  = "sudo ip link set dev #{interface_name} mtu #{mtu_ipv4}"
 
-      $interface_mtu_set_command = "sudo ip link set dev #{interface_name} mtu #{mtu_ipv4}"
-      machine.vm.provision 'shell', inline: $interface_mtu_set_command, name: $interface_mtu_set_command, run: 'always'
+      machine.vm.provision 'shell', inline: ifup_cmd, name: ifup_cmd, run: 'always'
+      machine.vm.provision 'shell', inline: mtu_cmd,  name: mtu_cmd,  run: 'always'
     end
-
   end
 end
