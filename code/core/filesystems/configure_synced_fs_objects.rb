@@ -231,10 +231,10 @@ def configure_synced_fs_objects(
     if File.file?(host_path)
       sync_type = 'file'
     elsif !File.exist?(host_path)
-      handle_message(
-        "instance [#{instance_name}] filesystem object [#{object_name}] " \
-        "host path [#{host_path}] not found.", 'WARNING'
-      )
+      #handle_message(
+      #  "instance [#{instance_name}] filesystem object [#{object_name}] " \
+      #  "host path [#{host_path}] not found.", 'WARNING'
+      #)
     end
 
     # ── Apply sync configuration ───────────────────────────────────────────────

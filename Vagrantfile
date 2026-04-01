@@ -48,6 +48,22 @@ end
 # Manage Vagrant plugin install state from plugins.yaml
 #
 configure_plugins(PLUGINS_CONFIG_FILE)
+#
+# Configure vagrant-hostmanager to auto-populate /etc/hosts across all guests
+#
+if Vagrant.has_plugin?('vagrant-hostmanager')
+  Vagrant.configure(VAGRANT_VERSION) do |config|
+    config.hostmanager.enabled       = true
+    config.hostmanager.manage_guest  = true
+    config.hostmanager.manage_host   = false
+    config.hostmanager.include_offline = false
+    config.hostmanager.ip_resolver = proc do |vm, resolving_vm|
+      read_ip = `vagrant ssh #{vm.name} -c "hostname -I" 2>/dev/null`
+      read_ip.split.find { |ip| ip.start_with?("192.168.56") }
+    end
+
+  end
+end
 
 #
 # Load and process all instance profiles

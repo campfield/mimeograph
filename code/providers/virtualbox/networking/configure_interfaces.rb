@@ -40,11 +40,20 @@ def configure_interfaces(
     interface_index   = idx + 2   # NIC index in VirtualBox is 1-based; NIC1 is the NAT adapter
 
     # ── MAC address ────────────────────────────────────────────────────────────
+    # Assign a deterministic MAC address to every additional NIC.  If an
+    # explicit mac_addr is set in the YAML, use it.  Otherwise generate one
+    # from the instance name and interface index using the VirtualBox OUI
+    # (08:00:27).  The same name + index always produces the same MAC,
+    # stabilising DHCP leases and NetworkManager connection profiles.
     mac_addr = lookup_values_yaml(interface_info, ['ipv4', 'mac_addr'])
-    if mac_addr
-      machine.vm.provider provider do |vbox|
-        vbox.customize ['modifyvm', :id, "--macaddress#{interface_index}", mac_addr]
-      end
+
+    unless mac_addr
+      mac_hash = Digest::MD5.hexdigest("#{name}-mac-#{interface_index}").upcase
+      mac_addr = "080027#{mac_hash[0..5]}"
+    end
+
+    machine.vm.provider provider do |vbox|
+      vbox.customize ['modifyvm', :id, "--macaddress#{interface_index}", mac_addr]
     end
 
     # ── Promiscuous mode ───────────────────────────────────────────────────────
@@ -224,12 +233,15 @@ def configure_interfaces(
     end
 
     # ── Bring up interface and set MTU on every boot ───────────────────────────
+    # Use 'ip link set up' instead of 'ifup' to avoid triggering NetworkManager
+    # to reconfigure all interfaces.  'ifup' is deprecated on RHEL 8, missing
+    # on minimal RHEL 9 installs, and will not be present on RHEL 10+.
     if bootproto != 'none'
-      ifup_cmd = "sudo ifup #{interface_name}"
-      mtu_cmd  = "sudo ip link set dev #{interface_name} mtu #{mtu_ipv4}"
+      link_up_cmd = "sudo ip link set dev #{interface_name} up"
+      mtu_cmd     = "sudo ip link set dev #{interface_name} mtu #{mtu_ipv4}"
 
-      machine.vm.provision 'shell', inline: ifup_cmd, name: ifup_cmd, run: 'always'
-      machine.vm.provision 'shell', inline: mtu_cmd,  name: mtu_cmd,  run: 'always'
+      machine.vm.provision 'shell', inline: link_up_cmd, name: link_up_cmd, run: 'always'
+      machine.vm.provision 'shell', inline: mtu_cmd,     name: mtu_cmd,     run: 'always'
     end
   end
 end

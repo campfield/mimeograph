@@ -109,16 +109,17 @@ def configure_interfaces_vmware(
       end
     end
 
-    # Bring up interface and set MTU on every boot (Linux guests with ifupdown).
-    # The 'none' case exits early via next above, so any interface reaching here
-    # (static, random, dhcp) should have its MTU set.
-    ifup_cmd = "sudo ifup #{interface_name}"
+    # Bring up interface and set MTU on every boot.
+    # Use 'ip link set up' instead of 'ifup' to avoid triggering NetworkManager
+    # to reconfigure all interfaces.  'ifup' is deprecated on RHEL 8, missing
+    # on minimal RHEL 9 installs, and will not be present on RHEL 10+.
+    link_up_cmd = "sudo ip link set dev #{interface_name} up"
     mtu_ipv4 = lookup_values_yaml(interface_info, ['ipv4', 'mtu']) ||
                lookup_values_yaml(instance_networking, ['defaults', 'ipv4', 'mtu']) ||
                '1500'
     mtu_cmd = "sudo ip link set dev #{interface_name} mtu #{mtu_ipv4}"
 
-    machine.vm.provision 'shell', inline: ifup_cmd, name: ifup_cmd, run: 'always'
-    machine.vm.provision 'shell', inline: mtu_cmd,  name: mtu_cmd,  run: 'always'
+    machine.vm.provision 'shell', inline: link_up_cmd, name: link_up_cmd, run: 'always'
+    machine.vm.provision 'shell', inline: mtu_cmd,     name: mtu_cmd,     run: 'always'
   end
 end

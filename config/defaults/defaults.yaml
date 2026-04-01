@@ -53,9 +53,9 @@ default_settings:
         # ── Box ───────────────────────────────────────────────────────────────
         box:
           # Vagrant Cloud name or local catalog name.
-          name: 'rockylinux/9'
+          name: 'centos/7'
           # Direct URL to download the box from.
-          # url: 'http://internal/boxes/rocky9-bios-libvirt.box'
+          # url: 'http://internal/boxes/centos7-libvirt.box'
           # Skip SSL verification on box download.
           download_insecure: false
           # MAC address for the management network NIC.
@@ -358,9 +358,9 @@ default_settings:
         box:
           # Vagrant Cloud name or local catalog name.
           # Falls back to the instance name if omitted.
-          name: 'rocky9-bios-virtualbox'
+          name: 'centos_7_x64-vagrant'
           # Direct URL to download the box from.
-          # url: 'http://internal/boxes/rocky9-bios-virtualbox.box'
+          # url: 'http://internal/boxes/centos7.box'
           # Skip SSL verification on box download.
           download_insecure: true
           # Use VirtualBox linked clone.
@@ -421,7 +421,7 @@ default_settings:
               # Valid values: static IPv4 | 'random' | 'dhcp' | 'none'
               ip_addr: 'random'
               # First three octets for random IP generation.
-              octets_slash_24: '10.0.101'
+              octets_slash_24: '192.168.56'
               netmask: '255.255.0.0'
               # Static/none bootproto.  Overridden to 'dhcp' when ip_addr is 'dhcp'.
               bootproto: 'static'
@@ -445,13 +445,13 @@ default_settings:
 
           # Instance-level (non-default) forwarded ports applied to all instances
           # in this group unless overridden in the profile.
-          forwarded_ports:
-            http:
-              instance_port: 80
-              host_port: 8080
-            https:
-              instance_port: 443
-              host_port: 8443
+ #         forwarded_ports:
+ #           http:
+#              instance_port: 80
+#              host_port: 8080
+#            https:
+#              instance_port: 443
+#              host_port: 8443
 
         # ── Storage ───────────────────────────────────────────────────────────
         storage:
@@ -491,7 +491,7 @@ default_settings:
             # Default synced folder applied to all instances in this group.
             synced_fs_objects:
               '/vagrant':
-                host_path: 'sync_directories'
+                host_path: '.'
                 instance_path: '/vagrant'
                 prepend_base_directory: true
 

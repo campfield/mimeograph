@@ -94,6 +94,16 @@ def configure_vagrant_box(
       base_mac_default
     ].find { |v| !v.nil? }
 
-    vbox.customize ['modifyvm', :id, '--macaddress1', base_mac] if base_mac
+    # Generate a deterministic MAC for NIC1 (the NAT adapter) if none is set.
+    # Uses the VirtualBox OUI (08:00:27) and a hash of the instance name +
+    # interface index, so the same instance always gets the same MAC.
+    # This stabilises DHCP leases and NetworkManager connection profiles
+    # across vagrant destroy/up cycles.
+    unless base_mac
+      mac_hash = Digest::MD5.hexdigest("#{name}-mac-1").upcase
+      base_mac = "080027#{mac_hash[0..5]}"
+    end
+
+    vbox.customize ['modifyvm', :id, '--macaddress1', base_mac]
   end
 end

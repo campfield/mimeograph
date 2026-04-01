@@ -533,7 +533,7 @@ Bob told it to fix the issues and the AI promptly refactored a large part of the
 
 The AI, for its part, did not claim credit in the git log, did not ask for a pint, and did not editorialize about the `elsif instance_profile` logic branch that could never, under any circumstances, have been reached.
 
-The real-ish world scenario has been updated to reflect the program's structure. The time traveler was not consulted, yet.
+The real-ish world scenario has been updated to reflect the program's structure. The time traveler will be consulted last week.
 
 ---
 

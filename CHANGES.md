@@ -104,7 +104,15 @@ A new `active_machine?` helper determines whether an instance is being targeted 
 
 ### VirtualBox VM naming
 
-The VirtualBox provider now sets the VM display name in three places: `vbox.name` for Vagrant's SetName action, and `vboxmanage modifyvm --name` as a post-configuration reinforcement in `configure_instance_virtualbox`. A previous `pre-import` customization that used incorrect Vagrant API syntax (`event:` keyword argument instead of positional) has been removed.
+The VirtualBox provider now sets the VM display name via `vbox.name` and `vboxmanage modifyvm --name` as a post-configuration reinforcement in `configure_instance_virtualbox`.
+
+### Deterministic MAC address generation (VirtualBox)
+
+VirtualBox NICs now receive deterministic MAC addresses generated from the instance name and interface index using the VirtualBox OUI (`08:00:27`). NIC1 (the NAT adapter) is set in `configure_vagrant_box` and NIC2+ are set in `configure_interfaces`. The same instance name always produces the same MACs, which stabilises DHCP leases, NetworkManager connection profiles, and MAC-based network policies across `vagrant destroy`/`vagrant up` cycles. Explicit `base_mac` (NIC1) or per-interface `mac_addr` values in the YAML override the auto-generation.
+
+### Interface bring-up modernised (all providers)
+
+The `sudo ifup <interface>` provisioner commands have been replaced with `sudo ip link set dev <interface> up` across all three providers. `ifup` was deprecated in RHEL 8, is missing on minimal RHEL 9 installs, and will not be present on RHEL 10+. It also triggered NetworkManager to reconfigure all interfaces, which could cause the NAT adapter to lose its DHCP lease. `ip link set up` toggles only the link state of the specified interface without side effects.
 
 ### SSH `private_key_path` support
 
@@ -116,7 +124,7 @@ The VirtualBox provider now sets the VM display name in three places: `vbox.name
 
 ### VirtualBox `base_mac` support
 
-The VirtualBox provider reads `box.base_mac` and applies it via `vboxmanage modifyvm --macaddress1`, allowing users to set a fixed MAC address for the first (NAT) NIC for DHCP reservation or network policy purposes.
+The VirtualBox provider reads `box.base_mac` and applies it via `vboxmanage modifyvm --macaddress1`, allowing users to set a fixed MAC address for the first (NAT) NIC for DHCP reservation or network policy purposes. When not set, a deterministic MAC is auto-generated from the instance name.
 
 ### Comprehensive example profiles
 
@@ -196,7 +204,7 @@ The Ruby function defaults, YAML global defaults, and all example profiles defau
 
 ### Broken VirtualBox `pre-import` customization
 
-The VirtualBox box configuration included `vbox.customize(['--vsys', '0', '--vmname', name], event: 'pre-import')`. Vagrant's `customize` method does not accept `event:` as a keyword argument — it expects the event as a positional first argument. Vagrant silently treated the command as a `pre-boot` customization, causing `VBoxManage --vsys 0 --vmname <name>` to run as a standalone command on every boot, which failed because `--vsys` is only valid during `VBoxManage import`. Removed the call entirely; VM naming is handled by `vbox.name` and the `modifyvm --name` customization.
+The VirtualBox box configuration included `vbox.customize(['--vsys', '0', '--vmname', name], event: 'pre-import')`. Vagrant's `customize` method does not accept `event:` as a keyword argument — it expects the event as a positional first argument. Vagrant silently treated the command as a `pre-boot` customization, causing `VBoxManage --vsys 0 --vmname <n>` to run as a standalone command on every boot, which failed because `--vsys` is only valid during `VBoxManage import`. Removed the call entirely; VM naming is handled by `vbox.name` and the `modifyvm --name` customization.
 
 ### Unreachable `elsif` branch
 
@@ -253,21 +261,21 @@ code/core/misc/active_machine.rb                       ARGV-based target detecti
 code/core/misc/configure_communication.rb              Provider-aware SSH/GUI config
 code/core/misc/deep_merge.rb                           Native Hash#deep_merge
 code/core/misc/provision_hostname.rb                   hostnamectl provisioner
-code/providers/libvirt/configure_vagrant_box.rb         libvirt box/hostname/connection
-code/providers/libvirt/configure_instance_hardware.rb   libvirt hardware/disks/display
-code/providers/libvirt/configure_networking.rb           libvirt networking/macvtap
-code/providers/vmware/configure_vagrant_box.rb          VMware box/hostname/vmnet
-code/providers/vmware/configure_instance_hardware.rb    VMware hardware/VMX
-code/providers/vmware/configure_networking.rb            VMware networking/bridging
-config/plugins/plugins.yaml                             Simplified plugin config
-config/defaults/example_libvirt.yaml                    libvirt example defaults
-config/defaults/example_virtualbox.yaml                 VirtualBox example defaults
-config/defaults/example_vmware.yaml                     VMware example defaults
-config/defaults/puppet.yaml                               puppet group defaults
-config/profiles/example_libvirt.yaml                    libvirt reference profile
-config/profiles/example_virtualbox.yaml                 VirtualBox reference profile
-config/profiles/example_vmware.yaml                     VMware reference profile
-config/profiles/puppet.yaml                               puppet profile
+code/providers/libvirt/configure_vagrant_box.rb        libvirt box/hostname/connection
+code/providers/libvirt/configure_instance_hardware.rb  libvirt hardware/disks/display
+code/providers/libvirt/configure_networking.rb         libvirt networking/macvtap
+code/providers/vmware/configure_vagrant_box.rb         VMware box/hostname/vmnet
+code/providers/vmware/configure_instance_hardware.rb   VMware hardware/VMX
+code/providers/vmware/configure_networking.rb          VMware networking/bridging
+config/plugins/plugins.yaml                            Simplified plugin config
+config/defaults/example_libvirt.yaml                   libvirt example defaults
+config/defaults/example_virtualbox.yaml                VirtualBox example defaults
+config/defaults/example_vmware.yaml                    VMware example defaults
+config/defaults/*.yaml                                 Other defaults slotted in
+config/profiles/example_libvirt.yaml                   libvirt reference profile
+config/profiles/example_virtualbox.yaml                VirtualBox reference profile
+config/profiles/example_vmware.yaml                    VMware reference profile
+config/profiles/*.yaml                                 Other profiles slotted in
 ```
 
 ### Renamed or relocated

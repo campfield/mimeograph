@@ -3,4 +3,4 @@ archive*
 /.vagrant
 *.rpm
 *.deb
-secret-*
+sensitive-*
