@@ -19,6 +19,7 @@ It allows large portions of Vagrant and instance configuration (VMs, hardware, n
 - `prepend_base_directory` path management for portable filesystem sync configurations
 - Provider abstraction for VirtualBox, libvirt, and VMware Desktop
 - Four filesystem sync types: VirtualBox shared folders, rsync, NFS, and file provisioner
+- Automatic vagrant-dns hostname registration with per-instance CNAME and TLD support
 
 ---
 
@@ -264,6 +265,76 @@ storage:
 
 ---
 
+## DNS / vagrant-dns
+
+mimeograph automatically registers each instance with the [vagrant-dns](https://github.com/BerlinVagrant/vagrant-dns) plugin when it is installed. No additional YAML is required for basic operation — the hostname already set by `configure_vagrant_box` (from the `hostname` key, or the sanitised instance name as fallback) is used directly.
+
+### Setup
+
+Ensure `vagrant-dns` is set to `present` in `config/plugins/plugins.yaml` (it is by default). After `vagrant up`, start the DNS daemon and install the OS resolver entry:
+
+```bash
+vagrant dns --install   # writes /etc/resolver/<tld> on macOS or equivalent on Linux
+vagrant dns --start     # starts the daemon; use --restart if already running
+```
+
+Verify registration:
+
+```bash
+vagrant dns --list                          # shows hostname → IP mappings
+dig myhost.local @127.0.0.1 -p 5300        # query the daemon directly
+```
+
+### TLD
+
+The TLD controls which DNS suffix the daemon intercepts at the OS level. It is resolved using the standard mimeograph priority order — later levels override earlier ones:
+
+| Level | Where to set it | Key |
+|-------|-----------------|-----|
+| 1 (lowest) | Hardcoded fallback | — (`'local'`) |
+| 2 | `config/defaults/defaults.yaml` | `default_settings.dns.tld` |
+| 3 | `config/defaults/<group>.yaml` | `default_settings.dns.tld` |
+| 4 (highest) | Per-instance profile | `providers.<provider>.instance.dns.tld` |
+
+Changing the TLD in `defaults.yaml` affects all instances. A group defaults file overrides it for that group. A per-instance `dns.tld` overrides it for that instance only.
+
+### Per-instance DNS options
+
+All keys live under `providers.<provider>.instance.dns`:
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `tld` | Override the TLD for this instance | Inherited from defaults |
+| `cnames` | Array of additional hostnames that resolve to this instance. TLD is appended automatically if no dot is present. | — |
+| `patterns` | Array of raw regexp strings or plain strings for advanced matching. Built and passed directly to `machine.dns.patterns`. | — |
+| `enabled` | Set to `false` to disable vagrant-dns registration for this instance entirely. | `true` |
+
+### hostname and DNS
+
+`hostname` is a sibling of `dns`, not nested inside it. It drives both guest OS hostname configuration (`machine.vm.hostname`, the `hostnamectl` provisioner) and the primary DNS entry. `dns.*` keys are host-side resolver settings only.
+
+```yaml
+providers:
+  virtualbox:
+    instance:
+      hostname: myhost.local   # guest OS hostname AND primary DNS name
+      dns:
+        tld: local
+        cnames:
+          - web.local
+          - api.local
+```
+
+### Bare hostnames
+
+When no `hostname` key is set, the sanitised instance name is used (e.g. `myvm`). mimeograph automatically appends the resolved TLD to form the FQDN used for pattern registration (`myvm.local`), since the OS resolver appends the TLD before querying the daemon and a bare-name pattern would never match.
+
+### vagrant-dns log and load issues
+
+By default, vagrant-dns writes to log file, under Debian-based distros under ${HOME}/.vagrant.d/tmp/dns/daemon/vagrant-dns.output which may consume excessive amounts of filesystem space and need periodic truncation.
+
+---
+
 ## Providers
 
 Three providers are implemented. Each has its own subdirectory under `code/providers/` and is loaded on demand.
@@ -378,6 +449,10 @@ The default if unspecified is `virtualbox`. Only one provider per instance name 
 | `box.base_mac` | MAC address for the first (NAT) NIC. 12 hex digits, no separators. Default: `nil` (randomised). |
 | `hostname` | Guest hostname. Defaults to instance name with non-alphanumeric characters stripped. |
 | `set_hostname` | When `true` (default), injects a shell provisioner that sets the guest hostname via `hostnamectl` (with fallback to legacy `hostname` command). Set to `false` to skip and leave hostname management to the guest OS or other tooling. |
+| `dns.tld` | Override the vagrant-dns TLD for this instance. Inherits from group/global defaults if unset. |
+| `dns.cnames` | Array of additional hostnames to register with vagrant-dns. TLD appended automatically if no dot present. |
+| `dns.patterns` | Array of raw regexp or string patterns passed directly to `machine.dns.patterns`. |
+| `dns.enabled` | Set to `false` to disable vagrant-dns registration for this instance. Default: `true` |
 | `communication.display.gui` | Start VirtualBox GUI on boot. Default: `false` |
 | `communication.ssh.auth_method` | `keypair` or `password`. Default: `keypair` |
 | `communication.ssh.username` | SSH username on the guest. Default: `vagrant` |

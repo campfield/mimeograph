@@ -27,7 +27,7 @@ plugins:
   vagrant-aws:
     ensure: absent
   vagrant-dns:
-    ensure: absent
+    ensure: present
   vagrant-list:
     ensure: absent
   vagrant-nuke:
@@ -35,6 +35,10 @@ plugins:
   vagrant-persistent-storage:
     ensure: ignore
   vagrant-libvirt:
-    ensure: absent
+    ensure: present
   vagrant-vmware_workstation:
-    ensure: ignore
+    ensure: absent
+  vagrant-vmware_desktop:
+    ensure: absent
+  vagrant-multi-hostsupdater:
+    ensure: absent

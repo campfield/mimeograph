@@ -1,18 +1,23 @@
 #
 # Dispatch to the correct provider's configure_instance() function.
-# Provider code is loaded with require (cached after first load).
+# Provider code is loaded once per provider and cached across instances.
 #
+PROVIDERS_LOADED = {}
+
 def configure_instances(machine, instance_profile, provider = 'virtualbox')
   return false unless lookup_values_yaml(instance_profile, ['providers', provider])
 
   provider_dir = "#{PROVIDERS_DIR}/#{provider}"
 
-  if File.directory?(provider_dir)
-    Find.find(provider_dir).sort.each do |f|
-      require f if f =~ /\.rb$/
+  unless PROVIDERS_LOADED[provider]
+    if File.directory?(provider_dir)
+      Find.find(provider_dir).sort.each do |f|
+        require f if f =~ /\.rb$/
+      end
+      PROVIDERS_LOADED[provider] = true
+    else
+      exit_with_message("provider directory [#{provider_dir}] not found.")
     end
-  else
-    exit_with_message("provider directory [#{provider_dir}] not found.")
   end
 
   case provider

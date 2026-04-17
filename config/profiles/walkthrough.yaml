@@ -96,6 +96,9 @@
             "VBoxInternal/best_os": "xubuntu"
         hostname: "curlyjoe.localdomain"
         set_hostname: true
+        dns:
+          cnames:
+            - curly.local
         networking:
           defaults:
             auto_config: true

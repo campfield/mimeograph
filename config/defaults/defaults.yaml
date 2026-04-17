@@ -27,6 +27,25 @@
 
 default_settings:
 
+  # ── vagrant-dns resolver TLD ───────────────────────────────────────────────
+  # Controls which DNS suffix the vagrant-dns daemon intercepts on the host.
+  # This value is read by collect_vagrant_dns_tld at Vagrantfile load time and
+  # sets config.dns.tld for the resolver daemon (e.g. /etc/resolver/local on
+  # macOS).  Override in a group defaults file to change it for all instances
+  # in that group, or set providers.<provider>.instance.dns.tld in a profile
+  # to override it for a single instance.
+  #
+  # Resolution order (later wins):
+  #   1. 'local'                          (hardcoded Ruby fallback)
+  #   2. This file  →  default_settings.dns.tld
+  #   3. Group defaults  →  default_settings.dns.tld
+  #   4. Per-instance  →  providers.<provider>.instance.dns.tld
+  dns:
+    tld: 'local'
+    # cnames:                # Additional hostnames that resolve to this instance.
+    #   - 'web.local'        # TLD is appended automatically if no dot is present.
+    #   - 'api.local'        # Use dns.patterns for advanced regexp-based entries.
+
   # ── Provider selection defaults ────────────────────────────────────────────
   providers:
     defaults:
@@ -53,7 +72,7 @@ default_settings:
         # ── Box ───────────────────────────────────────────────────────────────
         box:
           # Vagrant Cloud name or local catalog name.
-          name: 'centos/7'
+          name: 'rocky9-bios-libvirt'
           # Direct URL to download the box from.
           # url: 'http://internal/boxes/centos7-libvirt.box'
           # Skip SSL verification on box download.
@@ -358,7 +377,7 @@ default_settings:
         box:
           # Vagrant Cloud name or local catalog name.
           # Falls back to the instance name if omitted.
-          name: 'centos_7_x64-vagrant'
+          name: 'rocky9-bios-virtualbox'
           # Direct URL to download the box from.
           # url: 'http://internal/boxes/centos7.box'
           # Skip SSL verification on box download.

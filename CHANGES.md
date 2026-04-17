@@ -130,6 +130,34 @@ The VirtualBox provider reads `box.base_mac` and applies it via `vboxmanage modi
 
 Three new reference profiles demonstrate every supported option for each provider: `example_virtualbox.yaml`, `example_libvirt.yaml`, and `example_vmware.yaml`. Each includes minimal, typical, and full-option instance definitions with inline documentation. Matching example defaults files are provided.
 
+### vagrant-dns automatic hostname registration
+
+mimeograph now automatically registers each instance with the vagrant-dns plugin when it is installed (`ensure: present` in `plugins.yaml`). No additional YAML is required for basic operation.
+
+The primary DNS hostname is derived from the same source as `machine.vm.hostname` — the explicit `hostname` key if present, or the sanitised instance name as fallback — so there is no duplication. When the hostname has no domain suffix (bare name from instance name sanitisation), the resolved TLD is appended before pattern construction, since the OS resolver appends the TLD before querying the daemon and a bare-name pattern would never match.
+
+The global resolver TLD (`config.dns.tld`) is resolved from the YAML defaults stack using the standard mimeograph priority order via a new `collect_vagrant_dns_tld` function called from the Vagrantfile. The TLD can be overridden at every level: `default_settings.dns.tld` in `defaults.yaml` (global), `default_settings.dns.tld` in a group defaults file (group), or `providers.<provider>.instance.dns.tld` in an instance profile (per-instance).
+
+Per-instance options under `providers.<provider>.instance.dns`:
+
+- `tld` — override the TLD for this instance
+- `cnames` — array of plain hostname aliases; patterns built and qualified automatically
+- `patterns` — array of raw regexp or string patterns for advanced use
+- `enabled` — set to `false` to disable registration for this instance
+
+Startup requires two manual steps after `vagrant up`: `vagrant dns --install` (writes the OS resolver entry) and `vagrant dns --start` (starts the daemon). These are one-time operations unless the TLD changes.
+
+**New files:**
+- `code/core/misc/configure_vagrant_dns.rb` — per-instance DNS pattern registration
+- `code/core/misc/collect_vagrant_dns_tld.rb` — reads effective TLD from the defaults stack
+
+**Modified files:**
+- `Vagrantfile` — global `config.dns.tld` block using `collect_vagrant_dns_tld`
+- `code/providers/virtualbox/configure_instance.rb` — added `configure_vagrant_dns` call
+- `code/providers/libvirt/configure_instance.rb` — added `configure_vagrant_dns` call
+- `code/providers/vmware/configure_instance.rb` — added `configure_vagrant_dns` call
+- `config/defaults/defaults.yaml` — added `default_settings.dns.tld` with resolution-order documentation
+
 ### rsync privileged mode
 
 The `rsync` sync type now supports a `privileged` key. When `true`, the argument `--rsync-path='sudo rsync'` is appended to rsync options automatically, enabling rsync to write to root-owned directories on the guest.
@@ -259,6 +287,8 @@ code/local/populate_hash_synced_fs_objects.rb          Unused fs object helper
 code/core/instances/configure_all_instances.rb         Profile discovery and dispatch
 code/core/misc/active_machine.rb                       ARGV-based target detection
 code/core/misc/configure_communication.rb              Provider-aware SSH/GUI config
+code/core/misc/configure_vagrant_dns.rb                vagrant-dns per-instance registration
+code/core/misc/collect_vagrant_dns_tld.rb              vagrant-dns TLD resolution from defaults
 code/core/misc/deep_merge.rb                           Native Hash#deep_merge
 code/core/misc/provision_hostname.rb                   hostnamectl provisioner
 code/providers/libvirt/configure_vagrant_box.rb        libvirt box/hostname/connection

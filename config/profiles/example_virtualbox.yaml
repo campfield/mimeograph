@@ -47,6 +47,9 @@
           base_mac: ~
         hostname: vbox-typical.local
         set_hostname: true
+        dns:
+          cnames:
+            - web.local
         communication:
           display:
             gui: false
@@ -141,6 +144,25 @@
         hostname: vbox-full.example.com
         # Set to false to skip the hostname provisioner.
         set_hostname: true
+
+        # ── DNS (vagrant-dns) ─────────────────────────────────────────────────
+        # Requires the vagrant-dns plugin (ensure: present in plugins.yaml).
+        # hostname above is used as the primary DNS entry — no duplication needed.
+        # After vagrant up, run: vagrant dns --install && vagrant dns --start
+        dns:
+          # Override the TLD for this instance.  Inherits default_settings.dns.tld
+          # from defaults.yaml / group defaults if omitted.
+          tld: local
+          # Plain hostname aliases — patterns built automatically.
+          # TLD is appended if the entry has no dot.
+          cnames:
+            - vbox-full-alias.local
+            - web.local
+          # Raw regexp or string patterns for advanced use.
+          # patterns:
+          #   - 'vbox-full-custom.local'
+          # Set to false to disable vagrant-dns registration for this instance.
+          # enabled: false
 
         # ── Communication ─────────────────────────────────────────────────────
         communication:
@@ -260,38 +282,38 @@
               auto_config: true
 
             # Public (bridged) network — DHCP with explicit bridge interfaces
-            eth4:
-              ipv4:
-                ip_addr: dhcp
-              zone_class: public_network
-              auto_config: true
-              bridging:
-                # Use all host interfaces when listed ones are not found.
-                auto_correct: true
-                interfaces:
-                  - enp3s0
-                  - wlp2s0
+            #eth4:
+            #  ipv4:
+            #    ip_addr: dhcp
+            #  zone_class: public_network
+            #  auto_config: true
+            #  bridging:
+            #    # Use all host interfaces when listed ones are not found.
+            #    auto_correct: true
+            #    interfaces:
+            #      - enp3s0
+            #      - wlp2s0
 
             # Public (bridged) network — static IP
-            eth5:
-              ipv4:
-                ip_addr: '192.168.1.50'
-                netmask: '255.255.255.0'
-              zone_class: public_network
-              auto_config: true
+            #eth5:
+            #  ipv4:
+            #    ip_addr: '192.168.1.50'
+            #    netmask: '255.255.255.0'
+            #  zone_class: public_network
+            #  auto_config: true
 
             # Interface with MAC address override
-            eth6:
-              ipv4:
-                ip_addr: random
-                # Per-interface MAC address override for NIC2+.
-                # Format: 12 hex digits, no separators.
-                mac_addr: '080027AABBCC'
+            #eth6:
+            #  ipv4:
+            #    ip_addr: random
+            #    # Per-interface MAC address override for NIC2+.
+            #    # Format: 12 hex digits, no separators.
+            #    mac_addr: '080027AABBCC'
 
             # Interface created but not brought up on boot
-            eth7:
-              ipv4:
-                ip_addr: 'none'
+            #eth7:
+            #  ipv4:
+            #    ip_addr: 'none'
 
             # Bare interface — all values from networking.defaults
             eth8:

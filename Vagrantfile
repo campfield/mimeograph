@@ -49,21 +49,23 @@ end
 #
 configure_plugins(PLUGINS_CONFIG_FILE)
 #
-# Configure vagrant-hostmanager to auto-populate /etc/hosts across all guests
+# Configure the vagrant-dns resolver daemon TLD.
 #
-if Vagrant.has_plugin?('vagrant-hostmanager')
+# The TLD controls which suffix the OS resolver delegates to the vagrant-dns
+# daemon (via /etc/resolver/<tld> on macOS, systemd-resolved on Linux).
+# Individual instance patterns are registered per-machine in
+# configure_vagrant_dns.rb using the hostname already resolved by
+# configure_vagrant_box — no extra YAML is needed for basic operation.
+#
+# Change this to match your lab's hostname suffix if it differs from 'local'.
+# For example: 'test', 'vagrant', or 'lab'.
+#
+if Vagrant.has_plugin?('vagrant-dns')
   Vagrant.configure(VAGRANT_VERSION) do |config|
-    config.hostmanager.enabled       = true
-    config.hostmanager.manage_guest  = true
-    config.hostmanager.manage_host   = false
-    config.hostmanager.include_offline = false
-    config.hostmanager.ip_resolver = proc do |vm, resolving_vm|
-      read_ip = `vagrant ssh #{vm.name} -c "hostname -I" 2>/dev/null`
-      read_ip.split.find { |ip| ip.start_with?("192.168.56") }
-    end
-
+    config.dns.tld = collect_vagrant_dns_tld
   end
 end
+
 
 #
 # Load and process all instance profiles
