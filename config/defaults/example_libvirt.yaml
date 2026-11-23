@@ -1,5 +1,161 @@
 ---
 #
-# Default settings for example_libvirt profile group.
-# Intentionally empty — uses global config/defaults/defaults.yaml.
+# config/defaults/example_libvirt.yaml
 #
+# Default settings for the example_libvirt profile group: every option the
+# libvirt provider supports, set to working values, so the group is both a
+# reference and a test.  Deep-merged on top of config/defaults/defaults.yaml
+# (see that file for the full description of each key).  The instance itself
+# is in config/profiles/example_libvirt.yaml.
+#
+# Requirements on the host:
+#   - the vagrant-libvirt plugin (config/plugins/plugins.yaml) and a working
+#     libvirt/KVM (virsh -c qemu:///system list)
+#   - a libvirt build of the box below: boxes are per provider, so a
+#     VirtualBox box of the same name will not boot here
+#       vagrant box list | grep rocky-9.8      ->  needs "(libvirt, ...)"
+#   - for the console window (communication.display): virt-viewer and/or
+#     virt-manager installed, and a desktop session or SSH with X forwarding
+#
+# Bring it up:  vagrant up example-libvirt-rocky9
+#
+default_settings:
+
+  providers:
+    defaults:
+      providers:
+        autostart: false
+        enabled:
+          - 'libvirt'
+
+    libvirt:
+      instance:
+        autostart: false
+        boot_timeout: 300
+
+        # ── Box ───────────────────────────────────────────────────────────────
+        box:
+          name: 'rocky-9.8-x86_64-bios'
+          # url: 'http://internal/boxes/rocky-9.8-x86_64-bios-libvirt.box'
+          download_insecure: false
+          # Management network NIC MAC; ~ lets libvirt choose.
+          base_mac: ~
+
+        # ── libvirt connection ────────────────────────────────────────────────
+        driver: 'kvm'
+        disk_bus: 'virtio'
+        disk_cache: 'none'
+        storage_pool_name: 'default'
+        qemu_use_session: false
+        # Remote libvirt host (leave commented for this host):
+        # host: 'kvm-host.example.com'
+        # connect_via_ssh: true
+        # username: 'libvirt-user'
+        # id_ssh_key_file: '~/.ssh/id_rsa'
+        # socket: '/var/run/libvirt/libvirt-sock'
+        # uri: 'qemu:///system'
+
+        # ── Hostname ──────────────────────────────────────────────────────────
+        set_hostname: true
+
+        # ── vagrant-dns ───────────────────────────────────────────────────────
+        # Off so the example works without the vagrant-dns daemon; set true
+        # to register <hostname>.<tld> for the instance.
+        dns:
+          enabled: false
+
+        # ── Communication ─────────────────────────────────────────────────────
+        communication:
+          display:
+            # Off for the group; the example instance turns it on.
+            gui: false
+            viewer: 'virt-viewer'
+            # uri: 'qemu:///system'
+            wait_seconds: 300
+            script: 'tools/libvirt-console'
+          ssh:
+            auth_method: 'keypair'
+            username: 'vagrant'
+            password: 'vagrant'
+            # Pre-baked FIPS-compatible key (as in the other mimeograph labs):
+            # use it from the first connection instead of Vagrant's insecure key.
+            insert_key: false
+            private_key_path:
+              - 'files/ssh/keypairs/id_rsa-mimeograph-fips'
+            # keys_only: true
+            forward_agent: false
+            forward_x11: false
+
+        # ── Hardware ──────────────────────────────────────────────────────────
+        hardware:
+          cpus: 2
+          memory: 2048
+          # 'host-model' | 'host-passthrough' | 'custom'
+          cpu_mode: 'host-passthrough'
+          # cpu_model: 'qemu64'        # only with cpu_mode: 'custom'
+          nested: false
+          # The display the console viewer attaches to.  'vnc' | 'spice' | 'none'
+          graphics_type: 'vnc'
+          graphics_ip: '127.0.0.1'
+          # 'hd' | 'network' | 'cdrom'
+          boot: 'hd'
+          # disks: set per instance (see the profile)
+
+        # ── Networking ────────────────────────────────────────────────────────
+        # NIC 1 is always vagrant-libvirt's management network.  Interfaces
+        # listed per instance are NIC 2 onwards, on this private libvirt
+        # network (created by vagrant-libvirt on first use).
+        networking:
+          defaults:
+            ipv4:
+              # static IPv4 | 'random' | 'dhcp' | 'none'
+              ip_addr: 'random'
+              netmask: '255.255.255.0'
+              octets_slash_24: '10.210.0'
+              mtu: '1500'
+            # 'private_network' | 'public_network' (macvtap; needs 'dev')
+            zone_class: 'private_network'
+            network_name: 'mimeo-example'
+            # 'nat' | 'route' | 'none'
+            forward_mode: 'nat'
+            dhcp_enabled: true
+            auto_config: true
+            # dev: 'enp3s0'               # host device, public_network only
+            forwarded_ports:
+              auto_correct: true
+              protocol: 'tcp'
+
+        # ── Storage ───────────────────────────────────────────────────────────
+        storage:
+          filesystems:
+            defaults:
+              owner: 'root'
+              group: 'root'
+              mount_options: "dmode='755',fmode='755'"
+              # 'rsync' | 'nfs' | 'file'  ('sync' needs VirtualBox Guest Additions)
+              sync_type: 'rsync'
+              create_instance_path: true
+              prepend_base_directory: true
+              sharedfoldersenablesymlinkscreate: false
+              rsync:
+                auto: true
+                verbose: false
+                privileged: false
+                options:
+                  - '--archive'
+                  - '--copy-links'
+                  - '--delete'
+                  - '--safe-links'
+                exclude:
+                  - '.git/'
+                  - '.vagrant/'
+
+        # ── Provisioning commands ─────────────────────────────────────────────
+        commands:
+          defaults:
+            system:
+              # 'once' | 'always' | 'never'
+              call_count: 'once'
+              privileged: true
+              # 'inline' | 'path'
+              type: 'inline'

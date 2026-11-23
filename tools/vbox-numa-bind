@@ -1,0 +1,535 @@
+#!/usr/bin/env bash
+#
+# vbox-numa-bind - pin a VirtualBox VM process to a single host NUMA node.
+#
+# Node selection (unless --node is given or the VM is already pinned):
+#   1. Only nodes with enough free memory for the VM's RAM plus a host reserve
+#      are considered.
+#   2. "balanced" policy (default): fewest pinned VMs, then most free memory,
+#      then fewest committed vCPUs.
+#      "memory" policy: most free memory, then fewest VMs, then fewest vCPUs.
+#
+# Every thread of the VM process is pinned to the chosen node's CPUs.
+#
+# IMPORTANT: VirtualBox allocates guest RAM through its kernel driver, and
+# those pages cannot be migrated after the fact. They land on the node where
+# the allocating VM thread is running. For correct memory placement, pin the
+# process as soon as it starts: run with --watch before the VM boots (e.g.
+# from a Vagrant "before" trigger). The plain bind mode (e.g. from an "after"
+# trigger) fixes CPU placement only; migratepages moves just the VM process's
+# ordinary memory, not guest RAM.
+#
+# Requires: VBoxManage, numactl (migratepages), util-linux (taskset, flock),
+#           procps (pgrep), sudo. Run as the same user that runs VirtualBox,
+#           NOT as root: VBoxManage must talk to that user's VirtualBox.
+#
+# Privileges: VirtualBox VM processes are setuid-root hardened binaries, so
+# an ordinary user usually can't change their CPU affinity. Only taskset and
+# migratepages are run through 'sudo -n' (never prompts), and only when the
+# direct attempt fails. Install the matching sudoers rule
+# (see vbox-numa-bind.sudoers) for this to work unattended.
+#
+# Environment (command-line options take precedence):
+#   VBOX_NUMA_RESERVE_MB  RAM to keep free on each node for the host (default 4096)
+#   VBOX_NUMA_POLICY      balanced | memory (default balanced)
+#   VBOX_NUMA_SUDO        auto (try directly, then sudo) | always | never
+#                         (default auto)
+#   VBOX_NUMA_WAIT        seconds to wait for the VM process
+#                         (default 30 in bind mode, 900 in --watch mode)
+#   VBOX_NUMA_LOG         log file for background --watch mode
+#
+# Exit codes: 0 ok / nothing to do, 1 error, 2 VM not running, 3 no node has room.
+
+set -euo pipefail
+
+PROG=${0##*/}
+SELF=$(readlink -f "$0")
+RESERVE_MB=${VBOX_NUMA_RESERVE_MB:-4096}
+POLICY=${VBOX_NUMA_POLICY:-balanced}
+SUDO_MODE=${VBOX_NUMA_SUDO:-auto}
+TASKSET=""
+MIGRATEPAGES=""
+RUNDIR=${XDG_RUNTIME_DIR:-/tmp}
+LOCK_FILE="$RUNDIR/vbox-numa-bind.$(id -u).lock"
+LOG_FILE=${VBOX_NUMA_LOG:-$RUNDIR/vbox-numa-bind.log}
+
+VM_REF=""
+ID_FILE=""
+NODE_ARG=""
+MODE=bind
+FOREGROUND=0
+REPIN=0
+DRY_RUN=0
+IGNORE_PIDS=""
+WAIT_SECS=${VBOX_NUMA_WAIT:-}
+
+TARGET_UUID=""
+TARGET_NAME=""
+TARGET_MEM=0
+TARGET_CPUS=0
+
+declare -a NODES=() MEM_NODES=() ROWS=()
+declare -A NODE_CPUS=() NODE_SET=()
+declare -A VM_NAME=() VM_UUID=() VM_MEM=() VM_CPUS=()
+declare -A COUNT=() VCPUS=()
+
+usage() {
+    cat <<EOF
+Usage:
+  $PROG (--vm NAME|UUID | --id-file PATH) [options]
+        Pin a running VM now (waits up to ${VBOX_NUMA_WAIT:-30}s for it to appear).
+
+  $PROG --watch (--vm NAME|UUID | --id-file PATH) [options] [--foreground]
+        Detach, wait for a NEW process for this VM to start, and pin it
+        immediately. Processes already running for the VM are ignored, so
+        this works before 'vagrant up', 'reload' and 'resume'.
+
+  $PROG --status
+        Show nodes, pinned VM counts, and where each running VM is pinned.
+
+Options:
+  --vm NAME|UUID     VirtualBox VM name or UUID (matched against the VM
+                     process's --startvm and --comment arguments)
+  --id-file PATH     File holding the VM UUID, e.g. Vagrant's
+                     .vagrant/machines/NAME/virtualbox/id. It may not exist
+                     yet; the script waits for it (useful on first 'vagrant up').
+  --node N           Force a specific NUMA node
+  --policy P         balanced | memory
+  --reserve-mb N     RAM to keep free on each node for the host
+  --repin            Re-run node selection even if the VM is already pinned
+  --dry-run          Show the decision without pinning
+  -h, --help         This help
+EOF
+}
+
+log() { printf '%s %s: %s\n' "$(date '+%F %T')" "$PROG" "$*" >&2; }
+die() { log "error: $1"; exit "${2:-1}"; }
+need() { command -v "$1" >/dev/null 2>&1 || die "missing command '$1' (install $2)"; }
+
+# ---------------------------------------------------------------- helpers ---
+
+# "0-3,8,10-11" -> "0 1 2 3 8 10 11"
+expand_cpulist() {
+    local list=$1 part
+    local -a parts=() out=()
+    [[ -n $list ]] || return 0
+    IFS=, read -ra parts <<<"$list"
+    for part in "${parts[@]}"; do
+        if [[ $part == *-* ]]; then
+            out+=($(seq "${part%-*}" "${part#*-}"))
+        else
+            out+=("$part")
+        fi
+    done
+    printf '%s\n' "${out[@]}" | sort -n | paste -sd' '
+}
+
+# Value following FLAG (or FLAG=value) in a process's command line.
+proc_arg() {
+    tr '\0' '\n' <"/proc/$1/cmdline" 2>/dev/null |
+        awk -v f="$2" 'hit { print; exit }
+                       $0 == f { hit = 1; next }
+                       index($0, f "=") == 1 { print substr($0, length(f) + 2); exit }'
+}
+
+vm_pids() { pgrep -x 'VBoxHeadless|VirtualBoxVM' 2>/dev/null || true; }
+
+vm_field() {
+    awk -v k="$2" 'index($0, k "=") == 1 {
+                        v = substr($0, length(k) + 2); gsub(/^"|"$/, "", v); print v; exit }' <<<"$1"
+}
+
+# Fill VM_REF from --id-file once the file exists. Succeeds if VM_REF is set.
+resolve_ref() {
+    if [[ -z $VM_REF && -n $ID_FILE && -s $ID_FILE ]]; then
+        VM_REF=$(tr -d '[:space:]' <"$ID_FILE")
+    fi
+    [[ -n $VM_REF ]]
+}
+
+# Cache VM details keyed by the reference used (name or UUID).
+load_vm() {
+    local ref=$1 info
+    [[ -n ${VM_UUID[$ref]:-} ]] && return 0
+    info=$(VBoxManage showvminfo "$ref" --machinereadable 2>/dev/null) || return 1
+    VM_NAME[$ref]=$(vm_field "$info" name)
+    VM_UUID[$ref]=$(vm_field "$info" UUID)
+    VM_MEM[$ref]=$(vm_field "$info" memory)
+    VM_CPUS[$ref]=$(vm_field "$info" cpus)
+    [[ -n ${VM_UUID[$ref]} ]]
+}
+
+resolve_target() {
+    load_vm "$VM_REF" || return 1
+    TARGET_UUID=${VM_UUID[$VM_REF]}
+    TARGET_NAME=${VM_NAME[$VM_REF]}
+    TARGET_MEM=${VM_MEM[$VM_REF]:-0}
+    TARGET_CPUS=${VM_CPUS[$VM_REF]:-0}
+}
+
+pid_matches() {
+    local p=$1 startvm comment
+    [[ -n $VM_REF ]] || return 1
+    startvm=$(proc_arg "$p" --startvm)
+    comment=$(proc_arg "$p" --comment)
+    if [[ -n $startvm ]]; then
+        [[ $startvm == "$VM_REF" ]] && return 0
+        [[ -n $TARGET_UUID && $startvm == "$TARGET_UUID" ]] && return 0
+        [[ -n $TARGET_NAME && $startvm == "$TARGET_NAME" ]] && return 0
+    fi
+    if [[ -n $comment ]]; then
+        [[ $comment == "$VM_REF" ]] && return 0
+        [[ -n $TARGET_NAME && $comment == "$TARGET_NAME" ]] && return 0
+    fi
+    return 1
+}
+
+# First matching VM process not in the ignore list.
+find_vm_pid() {
+    local p
+    for p in $(vm_pids); do
+        [[ " $IGNORE_PIDS " == *" $p "* ]] && continue
+        if pid_matches "$p"; then
+            echo "$p"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# All matching VM processes (used to build the ignore list for --watch).
+find_vm_pids() {
+    local p
+    for p in $(vm_pids); do
+        if pid_matches "$p"; then echo "$p"; fi
+    done
+    return 0
+}
+
+load_nodes() {
+    local d n cl
+    for d in /sys/devices/system/node/node[0-9]*; do
+        [[ -d $d ]] || continue
+        n=${d##*node}
+        MEM_NODES+=("$n")
+        cl=$(<"$d/cpulist")
+        [[ -n $cl ]] || continue          # memory-only node: never a pin target
+        NODES+=("$n")
+        NODE_CPUS[$n]=$cl
+        NODE_SET[$n]=$(expand_cpulist "$cl")
+    done
+    ((${#NODES[@]})) || die "no NUMA nodes found under /sys/devices/system/node"
+    mapfile -t NODES < <(printf '%s\n' "${NODES[@]}" | sort -n)
+}
+
+# Free + easily reclaimable memory on a node, in kB.
+node_avail_kb() {
+    awk '$3 == "MemFree:" || $3 == "Inactive(file):" { s += $4 } END { print s + 0 }' \
+        "/sys/devices/system/node/node$1/meminfo"
+}
+
+# Node a process is pinned to, or "-" if its affinity doesn't match one node exactly.
+pid_node() {
+    local cl cpus n
+    cl=$(awk '/^Cpus_allowed_list:/ { print $2 }' "/proc/$1/status" 2>/dev/null || true)
+    cpus=$(expand_cpulist "$cl")
+    for n in "${NODES[@]}"; do
+        if [[ -n $cpus && $cpus == "${NODE_SET[$n]}" ]]; then
+            echo "$n"
+            return 0
+        fi
+    done
+    echo -
+}
+
+# "node kB" lines for a process's mapped memory, from /proc/PID/numa_maps.
+# Note: driver-mapped guest RAM may not appear here.
+pid_node_kb() {
+    awk '{
+            ps = 4
+            for (i = 2; i <= NF; i++)
+                if ($i ~ /^kernelpagesize_kB=/) { split($i, a, "="); ps = a[2] }
+            for (i = 2; i <= NF; i++)
+                if ($i ~ /^N[0-9]+=/) { split(substr($i, 2), b, "="); kb[b[1]] += b[2] * ps }
+         }
+         END { for (n in kb) print n, kb[n] }' "/proc/$1/numa_maps" 2>/dev/null || true
+}
+
+# Count pinned VMs and committed vCPUs per node, excluding one PID.
+scan_vms() {
+    local exclude=$1 p ref n v
+    for n in "${NODES[@]}"; do
+        COUNT[$n]=0
+        VCPUS[$n]=0
+    done
+    ROWS=()
+    for p in $(vm_pids); do
+        [[ $p == "$exclude" ]] && continue
+        ref=$(proc_arg "$p" --startvm)
+        [[ -n $ref ]] || continue
+        load_vm "$ref" || continue
+        n=$(pid_node "$p")
+        if [[ $n != - ]]; then
+            v=${VM_CPUS[$ref]:-0}
+            COUNT[$n]=$(( COUNT[$n] + 1 ))
+            VCPUS[$n]=$(( VCPUS[$n] + v ))
+        fi
+        ROWS+=("$p $n $ref")
+    done
+}
+
+# ------------------------------------------------------------ selection ----
+
+choose_node() {
+    local pid=$1 n kb avail own headroom mem_kb reserve_kb
+    local -A own_kb=()
+    local -a cands=() keys=()
+
+    while read -r n kb; do
+        [[ -n $n ]] && own_kb[$n]=$kb
+    done < <(pid_node_kb "$pid")
+
+    mem_kb=$(( TARGET_MEM * 1024 ))
+    reserve_kb=$(( RESERVE_MB * 1024 ))
+    scan_vms "$pid"
+
+    log "selecting node for $TARGET_NAME (${TARGET_MEM} MB, ${TARGET_CPUS} vCPUs, policy=$POLICY, reserve=${RESERVE_MB} MB):"
+    for n in "${NODES[@]}"; do
+        avail=$(node_avail_kb "$n")
+        own=${own_kb[$n]:-0}
+        headroom=$(( avail - reserve_kb - (mem_kb - own) ))
+        log "  node $n: pinned VMs=${COUNT[$n]} vCPUs=${VCPUS[$n]} available=$(( avail / 1024 )) MB headroom=$(( headroom / 1024 )) MB"
+        if (( headroom >= 0 )); then
+            cands+=("${COUNT[$n]} $headroom ${VCPUS[$n]} $n")
+        fi
+    done
+
+    ((${#cands[@]})) || return 1
+
+    case $POLICY in
+        memory) keys=(-k2,2nr -k1,1n -k3,3n) ;;
+        *)      keys=(-k1,1n -k2,2nr -k3,3n) ;;
+    esac
+    printf '%s\n' "${cands[@]}" | sort "${keys[@]}" | awk 'NR == 1 { print $4 }'
+}
+
+# --------------------------------------------------------------- actions ---
+
+# Run a privileged helper: directly first (auto), then through 'sudo -n'.
+run_priv() {
+    if [[ $SUDO_MODE != always ]] && "$@" >/dev/null 2>&1; then
+        return 0
+    fi
+    (( EUID == 0 )) && return 1
+    [[ $SUDO_MODE == never ]] && return 1
+    sudo -n "$@" >/dev/null 2>&1
+}
+
+# Warn early (visible in Vagrant's output) if the sudo rule is missing.
+check_sudo() {
+    (( EUID == 0 )) && return 0
+    [[ $SUDO_MODE == never ]] && return 0
+    if ! sudo -n -l "$TASKSET" -a -p -c 0 1 >/dev/null 2>&1; then
+        log "warning: no passwordless sudo rule for $TASKSET; pinning hardened VirtualBox processes will fail (see vbox-numa-bind.sudoers)"
+    fi
+}
+
+apply_pin() {
+    run_priv "$TASKSET" -a -p -c "${NODE_CPUS[$2]}" "$1" ||
+        die "cannot set CPU affinity for pid $1 (check the sudo rule for $TASKSET)"
+}
+
+migrate_mem() {
+    local pid=$1 node=$2 n from
+    local -a others=()
+    for n in "${MEM_NODES[@]}"; do
+        [[ $n != "$node" ]] && others+=("$n")
+    done
+    ((${#others[@]})) || return 0
+    from=$(IFS=,; echo "${others[*]}")
+    run_priv "$MIGRATEPAGES" "$pid" "$from" "$node" ||
+        log "warning: migratepages reported an error (driver-owned guest RAM is not movable)"
+}
+
+report() {
+    local pid=$1 node=$2 n kb total=0 local_kb=0
+    while read -r n kb; do
+        [[ -n $n ]] || continue
+        total=$(( total + kb ))
+        if [[ $n == "$node" ]]; then local_kb=$(( local_kb + kb )); fi
+    done < <(pid_node_kb "$pid")
+    if (( total > 0 )); then
+        log "process-mapped memory on node $node: $(( local_kb / 1024 )) of $(( total / 1024 )) MB ($(( 100 * local_kb / total ))%)"
+    fi
+}
+
+do_bind() {
+    local pid=$1 current target reason
+
+    exec 9>"$LOCK_FILE"
+    flock -w 120 9 || die "timed out waiting for lock $LOCK_FILE"
+
+    current=$(pid_node "$pid")
+    if [[ -n $NODE_ARG ]]; then
+        target=$NODE_ARG
+        reason="requested"
+    elif [[ $current != - && $REPIN -eq 0 ]]; then
+        target=$current
+        reason="already pinned"
+    else
+        target=$(choose_node "$pid") ||
+            die "no node has ${TARGET_MEM} MB + ${RESERVE_MB} MB reserve free; $TARGET_NAME left unpinned" 3
+        reason="$POLICY policy"
+    fi
+
+    log "$TARGET_NAME (pid $pid) -> node $target [$reason], CPUs ${NODE_CPUS[$target]}"
+    if (( DRY_RUN )); then
+        log "dry run: no changes made"
+        return 0
+    fi
+
+    apply_pin "$pid" "$target"
+    sleep 2
+    apply_pin "$pid" "$target"          # catch threads created during the first pass
+    migrate_mem "$pid" "$target"
+    report "$pid" "$target"
+}
+
+show_status() {
+    local n nn p ref row avail kb total local_kb
+    scan_vms ""
+    printf '%-5s %-24s %10s %6s %6s\n' NODE CPUS AVAIL_MB VMS VCPUS
+    for n in "${NODES[@]}"; do
+        avail=$(node_avail_kb "$n")
+        printf '%-5s %-24s %10s %6s %6s\n' "$n" "${NODE_CPUS[$n]}" $(( avail / 1024 )) "${COUNT[$n]}" "${VCPUS[$n]}"
+    done
+    echo
+    printf '%-30s %8s %5s %8s %6s %8s\n' VM PID NODE MEM_MB VCPUS LOCAL%
+    for row in "${ROWS[@]}"; do
+        read -r p n ref <<<"$row"
+        total=0
+        local_kb=0
+        while read -r nn kb; do
+            [[ -n $nn ]] || continue
+            total=$(( total + kb ))
+            if [[ $nn == "$n" ]]; then local_kb=$(( local_kb + kb )); fi
+        done < <(pid_node_kb "$p")
+        if [[ $n != - && $total -gt 0 ]]; then
+            local_kb=$(( 100 * local_kb / total ))
+        else
+            local_kb=-
+        fi
+        printf '%-30s %8s %5s %8s %6s %8s\n' "${VM_NAME[$ref]}" "$p" "$n" "${VM_MEM[$ref]}" "${VM_CPUS[$ref]}" "$local_kb"
+    done
+}
+
+# ------------------------------------------------------------------ main ---
+
+while (($#)); do
+    case $1 in
+        --vm)          VM_REF=${2:?--vm needs a value}; shift 2 ;;
+        --id-file)     ID_FILE=${2:?--id-file needs a path}; shift 2 ;;
+        --node)        NODE_ARG=${2:?--node needs a value}; shift 2 ;;
+        --policy)      POLICY=${2:?--policy needs a value}; shift 2 ;;
+        --reserve-mb)  RESERVE_MB=${2:?--reserve-mb needs a value}; shift 2 ;;
+        --watch)       MODE=watch; shift ;;
+        --foreground)  FOREGROUND=1; shift ;;
+        --repin)       REPIN=1; shift ;;
+        --dry-run)     DRY_RUN=1; shift ;;
+        --status)      MODE=status; shift ;;
+        --ignore-pids) IGNORE_PIDS=${2-}; shift 2 ;;
+        -h|--help)     usage; exit 0 ;;
+        *)             usage >&2; die "unknown option: $1" ;;
+    esac
+done
+
+case $POLICY in
+    balanced|memory) ;;
+    *) die "policy must be 'balanced' or 'memory'" ;;
+esac
+[[ $RESERVE_MB =~ ^[0-9]+$ ]] || die "reserve must be a whole number of MB"
+case $SUDO_MODE in
+    auto|always|never) ;;
+    *) die "VBOX_NUMA_SUDO must be 'auto', 'always' or 'never'" ;;
+esac
+
+need VBoxManage virtualbox
+need pgrep procps
+load_nodes
+
+if [[ $MODE == status ]]; then
+    show_status
+    exit 0
+fi
+
+need taskset util-linux
+need flock util-linux
+need migratepages numactl
+[[ $SUDO_MODE == never ]] || need sudo sudo
+
+# Absolute paths, so they match the sudoers rule exactly.
+TASKSET=$(command -v taskset)
+MIGRATEPAGES=$(command -v migratepages)
+
+[[ -n $VM_REF || -n $ID_FILE ]] || { usage >&2; die "--vm or --id-file is required"; }
+
+if [[ -n $NODE_ARG && -z ${NODE_CPUS[$NODE_ARG]:-} ]]; then
+    die "node $NODE_ARG does not exist or has no CPUs (nodes: ${NODES[*]})"
+fi
+
+if ((${#NODES[@]} < 2)); then
+    log "single NUMA node with CPUs; nothing to do"
+    exit 0
+fi
+
+check_sudo
+
+if [[ $MODE == watch ]]; then
+    WAIT_SECS=${WAIT_SECS:-900}
+
+    if (( ! FOREGROUND )); then
+        existing=""
+        if resolve_ref; then
+            resolve_target || true        # VM may not be registered yet
+            existing=$(find_vm_pids | paste -sd' ')
+        fi
+        args=(--watch --foreground --policy "$POLICY" --reserve-mb "$RESERVE_MB" --ignore-pids "$existing")
+        if [[ -n $VM_REF ]]; then
+            args+=(--vm "$VM_REF")
+        else
+            args+=(--id-file "$ID_FILE")
+        fi
+        [[ -n $NODE_ARG ]] && args+=(--node "$NODE_ARG")
+        (( REPIN )) && args+=(--repin)
+        (( DRY_RUN )) && args+=(--dry-run)
+        VBOX_NUMA_WAIT=$WAIT_SECS setsid "$SELF" "${args[@]}" >>"$LOG_FILE" 2>&1 </dev/null &
+        log "watching for ${VM_REF:-$ID_FILE} to start (log: $LOG_FILE)"
+        exit 0
+    fi
+
+    deadline=$(( SECONDS + WAIT_SECS ))
+    until resolve_ref && pid=$(find_vm_pid); do
+        if (( SECONDS >= deadline )); then
+            log "no new process for ${VM_REF:-$ID_FILE} within ${WAIT_SECS}s; nothing to do"
+            exit 0
+        fi
+        sleep 0.5
+    done
+    resolve_target || die "VM process $pid found but VirtualBox does not know '$VM_REF'"
+    do_bind "$pid"
+    exit 0
+fi
+
+# Plain bind mode.
+WAIT_SECS=${WAIT_SECS:-30}
+deadline=$(( SECONDS + WAIT_SECS ))
+until resolve_ref; do
+    (( SECONDS < deadline )) || die "VM id file $ID_FILE not found" 2
+    sleep 0.5
+done
+resolve_target || die "unknown VM: $VM_REF"
+until pid=$(find_vm_pid); do
+    (( SECONDS < deadline )) || die "$TARGET_NAME is not running" 2
+    sleep 0.5
+done
+do_bind "$pid"

@@ -46,6 +46,26 @@ The plugin system has been reduced to a single `configure_plugins.rb` that reads
 
 **Removed:** `code/core/plugins/configure_plugins_state.rb`, `code/core/plugins/plugins_code_load.rb`, `code/plugins/` directory and all per-plugin Ruby files, `config/plugins/defaults.yaml` (replaced by `config/plugins/plugins.yaml`).
 
+### Per-plugin integration code and hooks
+
+Plugin-specific Ruby now lives in `code/plugins/<plugin-name>/`, with the directory named exactly after the plugin. A directory is loaded by `load_plugin_code` only when the plugin is `ensure: present` in `plugins.yaml`, the directory exists, and `Vagrant.has_plugin?` reports it installed. Plugins set to `absent` or `ignore` never have their code loaded. Plugin names that are not plain directory names are refused.
+
+Unlike the removed `send()` dispatch, nothing in core or provider code calls a plugin function by name. Plugin files register blocks with `register_plugin_hook` against three fixed phases: `:global` (once, from the Vagrantfile), `:instance` (once per instance, from each provider) and `:compile` (verbatim Ruby for `tools/compile_vagrantfile.rb`). When a plugin's code is not loaded, its call sites are no-ops. An optional per-plugin `settings` hash in `plugins.yaml` is passed to its hooks.
+
+vagrant-dns is the first plugin moved to this layout. The Vagrantfile's hard-coded `config.dns.tld` block, the per-instance `VagrantDNS::Config.passthrough` block and the providers' direct `configure_vagrant_dns` calls are replaced by the plugin's `:global` and `:instance` hooks. `plugins.yaml` is now read through a shared `read_plugins_config` used by `configure_plugins`, `load_plugin_code` and the compiler.
+
+### vagrant-dns daemon output and log level
+
+vagrant-dns runs its daemon with `log_output: true` hard-coded, so `~/.vagrant.d/tmp/dns/daemon/vagrant-dns.output` grows without limit (a line per passthrough query plus the RubyDNS/async log). `VagrantDNS::Config.logger`, documented in the vagrant-dns README, is never read by the plugin and cannot fix this.
+
+New `vagrant-dns` settings in `plugins.yaml`: `daemon_output` (default `false`, which wraps `VagrantDNS::Service#run_options` so the daemons gem reopens the daemon's stdout and stderr on `/dev/null`), `log_level` (default `fatal`, exported as `CONSOLE_LEVEL` to the forked daemon) and `passthrough` (default `true`, previously hard-coded). Compiled Vagrantfiles embed the same wrapper through the plugin's `:compile` hook.
+
+### vagrant-dns AAAA blocking
+
+vagrant-dns serves only A records, so AAAA queries for VM names were forwarded upstream (passthrough on) or failed with NOTIMP (passthrough off). Forwarding doubled the daemon's upstream traffic, leaked VM names when the TLD is a real domain, and typically returned NXDOMAIN for names that exist.
+
+New `vagrant-dns` setting `block_aaaa` (default `true`): the daemon answers every AAAA query itself with an empty NOERROR (NODATA) response, ahead of all vagrant-dns rules, and never forwards it. RubyDNS is only loaded inside the forked daemon, so the filter is installed by wrapping `VagrantDNS::Service#start!`: it loads RubyDNS and prepends the filter onto `RubyDNS::RuleBasedServer#process` just before the fork. Code is in `code/plugins/vagrant-dns/block_aaaa.rb`, and compiled Vagrantfiles embed it alongside `daemon_output.rb`.
+
 ### Box catalogue management removed
 
 The original included a `config/boxes/` directory with a `defaults.yaml` and two handler functions (`configure_vagrant_boxes`, `configure_vagrant_boxes_state`) intended for managing global Vagrant box install state. The state function was a placeholder that returned immediately after loading the YAML. No box management was ever performed.
@@ -77,6 +97,17 @@ The original libvirt provider was a stub that logged "not implemented" and retur
 `configure_instance_hardware_libvirt` — CPUs, memory, CPU mode (`host-model`/`host-passthrough`/`custom`), CPU model, nested virtualisation, graphics type and IP, boot order, and additional disk definitions.
 
 `configure_networking_libvirt` — private networks with `libvirt__network_name`, `libvirt__forward_mode`, `libvirt__dhcp_enabled`, and `auto_config`; public networks via macvtap with required `dev` key and `active_machine?` guard; static, random, DHCP, and none IP modes; interface bring-up and MTU provisioning on every boot; forwarded ports.
+
+### libvirt console viewer
+
+libvirt had no equivalent of VirtualBox's `gui` window, and `communication.gui` was ignored for libvirt. A new `providers.libvirt.instance.communication.display` block (`gui`, `viewer`, `uri`, `wait_seconds`, `script`) makes mimeograph open a console viewer when an instance is brought up. `code/providers/libvirt/configure_console.rb` adds a Vagrant trigger that runs `tools/libvirt-console`:
+
+- `virt-viewer` (default) from a `before :up, :reload, :resume` trigger, waiting in the background for the domain (`--wait --reconnect`), so the window shows the whole boot and survives guest reboots.
+- `virt-manager` from an `after` trigger (`--show-domain-console`), since the domain must already exist.
+
+The VM is identified by the domain UUID in `.vagrant/machines/<name>/libvirt/id`. The helper detects how the user is connected: a desktop session opens the window directly, an SSH session with X forwarding opens it on the user's desktop, and an SSH session without forwarding (or with broken forwarding: no `xauth`, server not answering) opens nothing and prints the `ssh -X` and `virt-viewer --connect qemu+ssh://…` commands to use instead. The viewer is detached, duplicates are not opened, and a display problem never fails `vagrant up`. Triggers use `t.run` (path and args) so they serialize in the static Vagrantfile compiler. Off by default; a warning is given when `gui` is on but `hardware.graphics_type` is `none`.
+
+`config/defaults/example_libvirt.yaml` (previously empty) now sets every libvirt option to working values, and `config/profiles/example_libvirt.yaml` defines `example-libvirt-rocky9`, a small Rocky 9.8 VM with the console on, a second disk, a static address on a private network, an rsync folder and a provisioning command.
 
 ### VMware Desktop provider fully implemented
 
@@ -118,6 +149,14 @@ The `sudo ifup <interface>` provisioner commands have been replaced with `sudo i
 
 `configure_communication` now reads and applies `communication.ssh.private_key_path` when explicitly configured, allowing users with custom keypairs to specify the path in YAML.
 
+### SSH pre-baked key handling extended for FIPS/STIG hosts
+
+`communication.ssh.private_key_path` now accepts either a single path (String) or a YAML list of paths (Array), passed through to Vagrant unchanged. A list lets a hardened key be presented while keeping Vagrant's insecure key as a fallback during a transition. Each configured path is expanded (`~` resolved) and checked on the host; a missing file emits a `WARNING` at generation time rather than failing silently at connect time. A value that is neither a String nor an Array aborts with a clear message.
+
+A new `communication.ssh.keys_only` key is applied to `machine.ssh.keys_only` when explicitly set, forbidding password-based fallback. This is intended for hardened STIG guests where the well-known insecure keypair must be replaced with a FIPS-compatible key and only key authentication is permitted. Combined with `insert_key: false`, the custom key is used from the first connection instead of Vagrant regenerating one over the insecure key (which strict guest sshd configs reject when `ssh-rsa`/SHA-1 is disabled).
+
+When a custom `private_key_path` is supplied while `insert_key` is true (its default), `configure_communication` now emits a `WARNING`. Vagrant only inserts a generated keypair when it detects the well-known insecure key, so if that key appears in the `private_key_path` list Vagrant will generate and insert a fresh key and discard the supplied key(s) — the breakage described in hashicorp/vagrant#5090 — and the warning calls this case out specifically. A list of purely custom keys makes the insertion a no-op, but the pairing is still flagged so `insert_key`'s value is a deliberate choice. The configuration is not aborted, since bootstrap-then-rotate remains a valid Vagrant pattern; the guidance is to set `insert_key: false` to pin the supplied key(s), which is the correct setting on FIPS/STIG guests.
+
 ### VirtualBox `setextradata` support
 
 `configure_instance_hardware` now supports a `setextradata` hash under hardware configuration, allowing arbitrary `vboxmanage setextradata` key/value pairs. Values are validated as scalars before being passed to VBoxManage.
@@ -148,8 +187,8 @@ Per-instance options under `providers.<provider>.instance.dns`:
 Startup requires two manual steps after `vagrant up`: `vagrant dns --install` (writes the OS resolver entry) and `vagrant dns --start` (starts the daemon). These are one-time operations unless the TLD changes.
 
 **New files:**
-- `code/core/misc/configure_vagrant_dns.rb` — per-instance DNS pattern registration
-- `code/core/misc/collect_vagrant_dns_tld.rb` — reads effective TLD from the defaults stack
+- `code/core/misc/configure_vagrant_dns.rb` — per-instance DNS pattern registration (since moved to `code/plugins/vagrant-dns/`)
+- `code/core/misc/collect_vagrant_dns_tld.rb` — reads effective TLD from the defaults stack (since moved to `code/plugins/vagrant-dns/`)
 
 **Modified files:**
 - `Vagrantfile` — global `config.dns.tld` block using `collect_vagrant_dns_tld`
@@ -287,13 +326,20 @@ code/local/populate_hash_synced_fs_objects.rb          Unused fs object helper
 code/core/instances/configure_all_instances.rb         Profile discovery and dispatch
 code/core/misc/active_machine.rb                       ARGV-based target detection
 code/core/misc/configure_communication.rb              Provider-aware SSH/GUI config
-code/core/misc/configure_vagrant_dns.rb                vagrant-dns per-instance registration
-code/core/misc/collect_vagrant_dns_tld.rb              vagrant-dns TLD resolution from defaults
+code/core/plugins/read_plugins_config.rb               Shared plugins.yaml reader
+code/core/plugins/load_plugin_code.rb                  Per-plugin code loader (present plugins only)
+code/core/plugins/plugin_hooks.rb                      Plugin hook registry (:global/:instance/:compile)
+code/plugins/vagrant-dns/configure_vagrant_dns.rb      vagrant-dns per-instance registration
+code/plugins/vagrant-dns/collect_vagrant_dns_tld.rb    vagrant-dns TLD resolution from defaults
+code/plugins/vagrant-dns/daemon_output.rb              vagrant-dns daemon output / log level control
+code/plugins/vagrant-dns/block_aaaa.rb                 vagrant-dns AAAA (IPv6) query blocking
+code/plugins/vagrant-dns/hooks.rb                      vagrant-dns hook registration and settings
 code/core/misc/deep_merge.rb                           Native Hash#deep_merge
 code/core/misc/provision_hostname.rb                   hostnamectl provisioner
 code/providers/libvirt/configure_vagrant_box.rb        libvirt box/hostname/connection
 code/providers/libvirt/configure_instance_hardware.rb  libvirt hardware/disks/display
 code/providers/libvirt/configure_networking.rb         libvirt networking/macvtap
+code/providers/libvirt/configure_console.rb            libvirt console viewer triggers
 code/providers/vmware/configure_vagrant_box.rb         VMware box/hostname/vmnet
 code/providers/vmware/configure_instance_hardware.rb   VMware hardware/VMX
 code/providers/vmware/configure_networking.rb          VMware networking/bridging
@@ -304,6 +350,7 @@ config/defaults/example_vmware.yaml                    VMware example defaults
 config/defaults/*.yaml                                 Other defaults slotted in
 config/profiles/example_libvirt.yaml                   libvirt reference profile
 config/profiles/example_virtualbox.yaml                VirtualBox reference profile
+tools/libvirt-console                                  Opens virt-viewer/virt-manager on a libvirt VM
 config/profiles/example_vmware.yaml                    VMware reference profile
 config/profiles/*.yaml                                 Other profiles slotted in
 ```
@@ -316,4 +363,10 @@ code/providers/virtualbox/communications/configure_communication.rb
 
 config/plugins/defaults.yaml
   → config/plugins/plugins.yaml                          Restructured flat format
+
+code/core/misc/configure_vagrant_dns.rb
+  → code/plugins/vagrant-dns/configure_vagrant_dns.rb    Loaded only when vagrant-dns is present
+
+code/core/misc/collect_vagrant_dns_tld.rb
+  → code/plugins/vagrant-dns/collect_vagrant_dns_tld.rb  Loaded only when vagrant-dns is present
 ```

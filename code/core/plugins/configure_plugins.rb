@@ -19,19 +19,13 @@
 #   absent  - ensure the plugin is removed; uninstall if present
 #   ignore  - take no action regardless of current installed state
 #
+# An optional 'settings' hash per plugin is not used here; it is handed to the
+# plugin's integration code under code/plugins/<plugin-name>/ by
+# load_plugin_code.
+#
 def configure_plugins(source_file)
-  unless File.file?(source_file)
-    handle_message("plugins configuration file [#{source_file}] not found - skipping plugin management.", 'WARNING')
-    return
-  end
-
-  yaml    = YAML.safe_load(File.read(source_file))
-  plugins = lookup_values_yaml(yaml, ['plugins'])
-
-  unless plugins
-    handle_message('No plugins key found in plugins.yaml - skipping plugin management.', 'WARNING')
-    return
-  end
+  plugins = read_plugins_config(source_file)
+  return unless plugins
 
   valid_states = %w[present absent ignore]
 

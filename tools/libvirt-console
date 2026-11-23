@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+#
+# libvirt-console - open a graphical console for a mimeograph libvirt VM.
+#
+# Called from the Vagrant triggers that code/providers/libvirt/configure_console.rb
+# adds when an instance sets providers.libvirt.instance.communication.display.gui.
+# It can also be run by hand.
+#
+# The VM is found by the libvirt domain UUID that vagrant-libvirt writes to
+# .vagrant/machines/<name>/libvirt/id, so the domain name prefix vagrant-libvirt
+# chooses does not matter.
+#
+# Viewers:
+#   virt-viewer   (default) a console window only.  Started before 'vagrant up'
+#                 with --wait --reconnect, so it shows the whole boot and stays
+#                 attached across guest reboots.
+#   virt-manager  the full virt-manager window on that VM's console
+#                 (--show-domain-console).  The VM must already exist, so it is
+#                 opened after 'vagrant up'.
+#
+# The viewer is always started detached, so 'vagrant up' never waits for the
+# window.
+#
+# Where the window appears:
+#   desktop session on this host    DISPLAY or WAYLAND_DISPLAY set: open here
+#   SSH session with X forwarding    DISPLAY set (e.g. localhost:10.0): opens
+#                                    on your desktop through the forwarding
+#   SSH session without forwarding   no DISPLAY: nothing is opened; the two
+#                                    ways to get the console are printed (X
+#                                    forwarding cannot be switched on from this
+#                                    end: it is set up by your ssh client when
+#                                    you connect, with ssh -X or ForwardX11)
+#   X forwarding refused             DISPLAY set but the X server cannot be
+#                                    reached (xauth missing, X11Forwarding off
+#                                    in sshd): nothing is opened, reason printed
+#
+# Usage:
+#   libvirt-console --id-file FILE [--name NAME] [--uri URI]
+#                   [--viewer virt-viewer|virt-manager]
+#                   [--mode watch|open] [--wait SECONDS]
+#
+#   --mode watch   (before 'vagrant up') wait in the background, up to --wait
+#                  seconds, for the id file to appear, then open the viewer
+#   --mode open    (after 'vagrant up', or by hand) open the viewer now
+#
+# Environment:
+#   LIBVIRT_CONSOLE_LOG   log file for the background watcher
+#                         (default $XDG_RUNTIME_DIR/libvirt-console.log)
+#
+# Exit codes: always 0 from the trigger's point of view, so a viewer problem
+# never fails 'vagrant up'.  Problems are printed instead.
+#
+set -uo pipefail
+
+PROG=${0##*/}
+SELF=$(readlink -f "$0")
+RUNDIR=${XDG_RUNTIME_DIR:-/tmp}
+LOG_FILE=${LIBVIRT_CONSOLE_LOG:-$RUNDIR/libvirt-console.log}
+
+ID_FILE=""
+NAME=""
+URI="qemu:///system"
+VIEWER="virt-viewer"
+MODE="open"
+WAIT=300
+FOREGROUND=0
+
+say() { echo "${PROG}: $*"; }
+
+usage() {
+  sed -n '3,/^set -uo pipefail/p' "$SELF" | sed '$d' | sed 's/^# \{0,1\}//'
+  exit 0
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --id-file)    ID_FILE=${2:?--id-file needs a path}; shift ;;
+    --name)       NAME=${2:?--name needs a value}; shift ;;
+    --uri)        URI=${2:?--uri needs a value}; shift ;;
+    --viewer)     VIEWER=${2:?--viewer needs a value}; shift ;;
+    --mode)       MODE=${2:?--mode needs a value}; shift ;;
+    --wait)       WAIT=${2:?--wait needs seconds}; shift ;;
+    --foreground) FOREGROUND=1 ;;
+    -h|--help)    usage ;;
+    *) say "unknown option: $1 (try --help)"; exit 0 ;;
+  esac
+  shift
+done
+
+[ -n "$ID_FILE" ] || { say "--id-file is required"; exit 0; }
+NAME=${NAME:-$(basename "$(dirname "$(dirname "$ID_FILE")")")}
+
+case "$VIEWER" in
+  virt-viewer|virt-manager) ;;
+  *) say "[$NAME] unknown viewer '$VIEWER' (virt-viewer | virt-manager); not opening a console"; exit 0 ;;
+esac
+case "$MODE" in
+  watch|open) ;;
+  *) say "[$NAME] unknown mode '$MODE' (watch | open)"; exit 0 ;;
+esac
+
+# ── where would a window go? ─────────────────────────────────────────────────
+# Prints nothing and returns 0 when a window can be opened; otherwise prints
+# why not (and what to do) and returns 1.
+display_ok() {
+  local remote=0
+  [ -n "${SSH_CONNECTION:-}${SSH_CLIENT:-}${SSH_TTY:-}" ] && remote=1
+
+  if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    if [ "$remote" -eq 1 ]; then
+      local host
+      host=$(hostname -f 2>/dev/null || hostname)
+      say "[$NAME] this is an SSH session without X forwarding, so no console window can be opened here."
+      say "[$NAME]   either reconnect with X forwarding:   ssh -X $(id -un)@${host}"
+      say "[$NAME]     (or set 'ForwardX11 yes' for this host in ~/.ssh/config on your desktop)"
+      say "[$NAME]   or run the viewer on your desktop:"
+      say "[$NAME]     virt-viewer --connect $(remote_uri "$host") --wait --reconnect $(domain_ref_hint)"
+    else
+      say "[$NAME] no graphical session (DISPLAY and WAYLAND_DISPLAY are unset); not opening a console"
+    fi
+    return 1
+  fi
+
+  # A DISPLAY from SSH X forwarding (localhost:10.0 and up) must actually
+  # work: xauth must exist and the X server must answer.
+  if [ -n "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    if [ "$remote" -eq 1 ] && ! command -v xauth >/dev/null 2>&1; then
+      say "[$NAME] DISPLAY=$DISPLAY comes from SSH X forwarding, but xauth is not installed on this host; not opening a console"
+      say "[$NAME]   install xauth here, or run the viewer on your desktop (see --help)"
+      return 1
+    fi
+    if command -v xset >/dev/null 2>&1 && ! xset q >/dev/null 2>&1; then
+      if [ "$remote" -eq 1 ]; then
+        say "[$NAME] DISPLAY=$DISPLAY is set but the X server does not answer (is X11Forwarding enabled in this host's sshd?); not opening a console"
+      else
+        say "[$NAME] DISPLAY=$DISPLAY is set but the X server does not answer; not opening a console"
+      fi
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# The URI a viewer on the user's desktop would use to reach this host.
+remote_uri() {
+  local host=$1
+  case "$URI" in
+    qemu:///system)  echo "qemu+ssh://$(id -un)@${host}/system" ;;
+    qemu:///session) echo "qemu+ssh://$(id -un)@${host}/session" ;;
+    *)               echo "$URI" ;;
+  esac
+}
+
+domain_ref_hint() {
+  if [ -s "$ID_FILE" ]; then cat "$ID_FILE"; else echo "<domain-uuid from $ID_FILE>"; fi
+}
+
+# Only real viewer processes count (matched by process name, then by the
+# UUID in their arguments); a plain 'pgrep -f' would also match shells whose
+# command lines merely mention the viewer and the UUID.
+already_open() {   # already_open <uuid>
+  local pid
+  for pid in $(pgrep -u "$(id -u)" -x virt-viewer 2>/dev/null) $(pgrep -u "$(id -u)" -x virt-manager 2>/dev/null); do
+    tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | grep -qF -- "$1" && return 0
+  done
+  return 1
+}
+
+launch() {   # launch <uuid>
+  local uuid=$1
+  if ! command -v "$VIEWER" >/dev/null 2>&1; then
+    say "[$NAME] $VIEWER is not installed on this host (package: $VIEWER); not opening a console"
+    return
+  fi
+  if already_open "$uuid"; then
+    say "[$NAME] a console viewer for this VM is already open"
+    return
+  fi
+  case "$VIEWER" in
+    virt-viewer)
+      setsid nohup virt-viewer --connect "$URI" --wait --reconnect --title "$NAME (%s)" "$uuid" \
+        >/dev/null 2>&1 < /dev/null &
+      ;;
+    virt-manager)
+      setsid nohup virt-manager --connect "$URI" --show-domain-console "$uuid" \
+        >/dev/null 2>&1 < /dev/null &
+      ;;
+  esac
+  say "[$NAME] opened $VIEWER on its console (${DISPLAY:-$WAYLAND_DISPLAY}, $URI)"
+}
+
+# ── modes ────────────────────────────────────────────────────────────────────
+display_ok || exit 0
+
+if [ "$MODE" = open ]; then
+  if [ ! -s "$ID_FILE" ]; then
+    say "[$NAME] no libvirt id yet ($ID_FILE): the VM has not been created"
+    exit 0
+  fi
+  launch "$(tr -d '[:space:]' < "$ID_FILE")"
+  exit 0
+fi
+
+# watch: the VM may not exist yet (first 'vagrant up' creates it after this
+# trigger), so wait for vagrant-libvirt to write the id file, in the background.
+if [ "$FOREGROUND" -eq 0 ]; then
+  args=(--id-file "$ID_FILE" --name "$NAME" --uri "$URI" --viewer "$VIEWER" --mode watch --wait "$WAIT" --foreground)
+  setsid nohup "$SELF" "${args[@]}" >> "$LOG_FILE" 2>&1 < /dev/null &
+  if [ -s "$ID_FILE" ]; then
+    say "[$NAME] opening $VIEWER on its console"
+  else
+    say "[$NAME] $VIEWER will open on its console once the VM is created (log: $LOG_FILE)"
+  fi
+  exit 0
+fi
+
+deadline=$(( $(date +%s) + WAIT ))
+while [ ! -s "$ID_FILE" ]; do
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    say "[$NAME] $(date '+%F %T') gave up after ${WAIT}s waiting for $ID_FILE"
+    exit 0
+  fi
+  sleep 1
+done
+say "[$NAME] $(date '+%F %T') VM id found"
+launch "$(tr -d '[:space:]' < "$ID_FILE")"
+exit 0

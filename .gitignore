@@ -4,3 +4,4 @@ archive*
 *.rpm
 *.deb
 sensitive-*
+sensitive

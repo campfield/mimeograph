@@ -1,0 +1,23 @@
+# /etc/sudoers.d/vbox-numa-bind
+#
+# Lets VirtualBox users pin VM processes to NUMA nodes without a password.
+# Only the two helper commands vbox-numa-bind needs, in the argument form it
+# uses. The script itself must NOT be run through sudo: VBoxManage has to talk
+# to the invoking user's VirtualBox.
+#
+# Install:
+#   sudo install -m 0440 -o root -g root vbox-numa-bind.sudoers /etc/sudoers.d/vbox-numa-bind
+#   sudo visudo -cf /etc/sudoers.d/vbox-numa-bind
+#
+# Scope: everyone in the vboxusers group. To limit it to one account, replace
+# %vboxusers with the user name.
+#
+# Both /usr/bin and /bin paths are listed so the rule matches regardless of
+# PATH order on usr-merged systems.
+
+Cmnd_Alias VBOX_NUMA_PIN = /usr/bin/taskset -a -p -c *, \
+                           /bin/taskset -a -p -c *, \
+                           /usr/bin/migratepages *, \
+                           /bin/migratepages *
+
+%vboxusers ALL=(root) NOPASSWD: VBOX_NUMA_PIN

@@ -1,9 +1,11 @@
 #
-# configure_vagrant_dns.rb
+# code/plugins/vagrant-dns/configure_vagrant_dns.rb
 #
-# Registers vagrant-dns hostname entries for an instance when the vagrant-dns
-# plugin is installed.  Derives all DNS data from existing instance profile
-# fields — no additional YAML keys are required for basic operation.
+# Registers vagrant-dns hostname entries for an instance.  Called through the
+# vagrant-dns :instance hook (see hooks.rb in this directory), which only
+# exists when the plugin's code has been loaded by load_plugin_code.  Derives
+# all DNS data from existing instance profile fields — no additional YAML keys
+# are required for basic operation.
 #
 # machine.vm.hostname is already set by configure_vagrant_box (using the
 # 'hostname' key if present, or the sanitised instance name as fallback).
@@ -25,8 +27,8 @@
 # default_settings before the deep_merge in configure_all_instances.
 # Level 4 sits at the standard per-instance provider path.
 #
-# If the resolved TLD differs from the global config.dns.tld already set in
-# the Vagrantfile, an additional Vagrant.configure block is registered so the
+# If the resolved TLD differs from the global config.dns.tld already set by
+# the :global hook, an additional Vagrant.configure block is registered so the
 # resolver daemon covers this TLD as well.
 #
 # Optional YAML keys (providers.<provider>.instance):
@@ -42,8 +44,6 @@
 #       - 'web.myhost.local'
 #
 def configure_vagrant_dns(machine, instance_profile, provider = 'virtualbox')
-  return unless Vagrant.has_plugin?('vagrant-dns')
-
   box_config = lookup_values_yaml(instance_profile, ['providers', provider])
   return unless box_config
 
@@ -71,8 +71,7 @@ def configure_vagrant_dns(machine, instance_profile, provider = 'virtualbox')
     'local'                                                            # level 1: hardcoded fallback
   ].find { |v| !v.nil? }
 
-  # If this instance's TLD differs from whatever the Vagrantfile registered
-  # globally, add a new configure block so the resolver daemon covers it.
+  # If this instance's TLD differs from whatever the :global hook registered, add a new configure block so the resolver daemon covers it.
   # Vagrant accumulates configure blocks; last-write-wins for attr_accessor
   # settings, so this effectively sets the "most specific" TLD active.
   Vagrant.configure(VAGRANT_VERSION) do |config|

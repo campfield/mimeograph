@@ -1,5 +1,5 @@
 #
-# collect_vagrant_dns_tld.rb
+# code/plugins/vagrant-dns/collect_vagrant_dns_tld.rb
 #
 # Resolves the effective global TLD for the vagrant-dns resolver daemon by
 # reading the YAML defaults stack in the same order as the rest of mimeograph.
@@ -9,7 +9,8 @@
 #   2. config/defaults/defaults.yaml  →  default_settings.dns.tld
 #   3. config/defaults/<group>.yaml   →  default_settings.dns.tld
 #
-# Called from the Vagrantfile for the single global config.dns.tld entry.
+# Called from the vagrant-dns :global hook (hooks.rb) for the single global
+# config.dns.tld entry.
 # Per-instance and per-group overrides that differ from this value are
 # registered from within configure_vagrant_dns as each instance is processed.
 #

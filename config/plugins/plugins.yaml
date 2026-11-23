@@ -16,9 +16,20 @@
 # To change versions: set ensure to absent, run vagrant, then set the new
 # version and set ensure back to present.
 #
+# Plugin integration code
+# -----------------------
+# mimeograph-side code for a plugin lives in code/plugins/<plugin-name>/ (the
+# directory name must match the plugin name).  It is loaded only when the
+# plugin is ensure: present here, the directory exists, and Vagrant reports
+# the plugin as installed.  Plugins without a directory are simply installed
+# or removed.
+#
+# An optional 'settings' hash is passed to that code.  The accepted keys are
+# documented in the plugin's code/plugins/<plugin-name>/hooks.rb.
+#
 plugins:
   vagrant-vbguest:
-    ensure: present
+    ensure: absent
     # version: '0.29.0'
   vagrant-hostmanager:
     ensure: absent
@@ -28,6 +39,17 @@ plugins:
     ensure: absent
   vagrant-dns:
     ensure: present
+    settings:
+      # Forward non-matching queries upstream: true | false | unknown
+      passthrough: true
+      # false sends the daemon's stdout/stderr to /dev/null instead of
+      # ~/.vagrant.d/tmp/dns/daemon/vagrant-dns.output (which grows forever).
+      daemon_output: false
+      # Daemon log threshold: debug | info | warn | error | fatal (quietest)
+      log_level: fatal
+      # true answers every AAAA (IPv6) query with "no IPv6 address" locally,
+      # instead of forwarding it upstream.  vagrant-dns only serves A records.
+      block_aaaa: true
   vagrant-list:
     ensure: absent
   vagrant-nuke:
@@ -42,3 +64,5 @@ plugins:
     ensure: absent
   vagrant-multi-hostsupdater:
     ensure: absent
+  vagrant-vmware-esxi:
+    ensure: present

@@ -72,17 +72,17 @@ default_settings:
         # ── Box ───────────────────────────────────────────────────────────────
         box:
           # Vagrant Cloud name or local catalog name.
-          name: 'rocky9-bios-libvirt'
+          name: 'rocky-9.8-x86_64-bios'
           # Direct URL to download the box from.
           # url: 'http://internal/boxes/centos7-libvirt.box'
           # Skip SSL verification on box download.
           download_insecure: false
           # MAC address for the management network NIC.
-          # null/~ randomises the MAC — recommended default.
+          # null/~ randomizes the MAC — recommended default.
           base_mac: ~
 
         # ── libvirt Connection ─────────────────────────────────────────────────
-        # Hypervisor driver.  'kvm' requires hardware virtualisation support.
+        # Hypervisor driver.  'kvm' requires hardware virtualization support.
         # Valid values: 'kvm' | 'qemu'
         driver: 'kvm'
         # Primary disk bus type.
@@ -112,9 +112,33 @@ default_settings:
         set_hostname: true
 
         # ── Communication ─────────────────────────────────────────────────────
-        # libvirt does not use a 'gui' flag — display is configured via
-        # hardware.graphics_type below.
         communication:
+          # Console viewer.  libvirt has no VirtualBox-style GUI window of its
+          # own: the VM's display device comes from hardware.graphics_type, and
+          # 'gui: true' makes 'vagrant up' open a viewer on it (through Vagrant
+          # triggers and tools/libvirt-console).  The viewer starts detached,
+          # on the host running 'vagrant up'.  Over SSH it opens on your desktop
+          # when X forwarding is on (ssh -X, or ForwardX11 in ~/.ssh/config);
+          # without forwarding nothing opens and the commands to reach the
+          # console are printed.  A display problem never fails 'vagrant up'.
+          display:
+            # Open a console viewer on 'vagrant up' / 'reload' / 'resume'.
+            gui: false
+            # Valid values: 'virt-viewer' | 'virt-manager'
+            #   virt-viewer  - console window only; opened before boot with
+            #                  --wait --reconnect, so it shows the whole boot
+            #                  and survives guest reboots
+            #   virt-manager - the virt-manager window on the VM's console;
+            #                  opened after 'vagrant up' (the VM must exist)
+            viewer: 'virt-viewer'
+            # libvirt URI the viewer connects to.  Default: the instance 'uri';
+            # else qemu+ssh://<username>@<host>/system when 'host' is set; else
+            # qemu:///session when qemu_use_session is true; else qemu:///system.
+            # uri: 'qemu:///system'
+            # virt-viewer only: seconds to wait for the VM to be created.
+            wait_seconds: 300
+            # Helper that opens the viewer (relative to the project root).
+            script: 'tools/libvirt-console'
           ssh:
             # Authentication method.  Valid values: 'keypair' | 'password'
             auth_method: 'keypair'
@@ -125,9 +149,20 @@ default_settings:
             # Replace the insecure default Vagrant keypair with a generated one.
             # Set to false when using password auth or a pre-baked keypair.
             insert_key: true
-            # Path to a private key file for SSH authentication.
-            # Only set when using a pre-baked keypair instead of Vagrant's insecure key.
+            # Path to a private key file for SSH authentication.  Only set when
+            # using a pre-baked keypair (e.g. a FIPS/STIG-compatible key) instead
+            # of Vagrant's insecure key.  For hardened guests, pair this with
+            # 'insert_key: false' so the custom key is used from the first
+            # connection.  Accepts a single path or a YAML list of paths; a list
+            # lets you keep the insecure key as a fallback during a transition.
+            # A missing file is reported as a warning at generation time.
             # private_key_path: '~/.ssh/my_vm_key'
+            # private_key_path:
+            #   - '~/.ssh/fips_vm_ed25519'
+            #   - '~/.vagrant.d/insecure_private_key'
+            # Only authenticate with the keys above; forbid password fallback.
+            # Only applied when set.  Recommended 'true' on STIG guests.
+            # keys_only: true
             # Forward SSH agent from host into guest.
             forward_agent: false
             # Forward X11 display from guest to host.
@@ -146,7 +181,8 @@ default_settings:
           # cpu_model: 'qemu64'
           # Enable nested KVM virtualisation.
           nested: false
-          # Display protocol for the guest console.
+          # Display protocol for the guest console (what communication.display
+          # viewers and virt-manager / Cockpit attach to).
           # Valid values: 'vnc' | 'spice' | 'none'
           graphics_type: 'vnc'
           # IP address the graphics socket binds to.
@@ -266,7 +302,7 @@ default_settings:
           # MAC address of the first (NAT) NIC.
           # nil randomises the MAC on each clone.
           base_mac: ~
-
+          name: 'rocky-9.8-x86_64-bios'
         # ── VMware-specific settings ───────────────────────────────────────────
         # Verify vmnet device health before booting.
         verify_vmnet: true
@@ -294,10 +330,13 @@ default_settings:
             username: 'vagrant'
             password: 'vagrant'
             insert_key: true
+            # Path to a pre-baked key (single path or a YAML list).  Pair with
+            # 'insert_key: false' on FIPS/STIG guests.  Missing files warn.
             # private_key_path: '~/.ssh/my_vm_key'
+            # keys_only: true   # force key auth, no password fallback (when set)
             forward_agent: false
             forward_x11: false
-
+            create_pty: false
         # ── Hardware ──────────────────────────────────────────────────────────
         hardware:
           cpus: 2
@@ -370,14 +409,20 @@ default_settings:
     # ══════════════════════════════════════════════════════════════════════════
     virtualbox:
       instance:
-        autostart: false
+        autostart: true
         boot_timeout: 240
+        host_numa:
+          enabled: true
+          node: auto
+          policy: balanced
+          #reserve_mb: 2048
+          script: tools/vbox-numa-bind
 
         # ── Box ───────────────────────────────────────────────────────────────
         box:
           # Vagrant Cloud name or local catalog name.
           # Falls back to the instance name if omitted.
-          name: 'rocky9-bios-virtualbox'
+          name: 'rocky-9.8-x86_64-bios'
           # Direct URL to download the box from.
           # url: 'http://internal/boxes/centos7.box'
           # Skip SSL verification on box download.
@@ -415,7 +460,10 @@ default_settings:
             # Replacing the key requires key-based auth to succeed first.
             # Set to false when using password auth.
             insert_key: false
+            # Path to a pre-baked key (single path or a YAML list).  Pair with
+            # 'insert_key: false' on FIPS/STIG guests.  Missing files warn.
             # private_key_path: '~/.ssh/my_vm_key'
+            # keys_only: true   # force key auth, no password fallback (when set)
             forward_agent: true
             forward_x11: false
 
@@ -427,6 +475,8 @@ default_settings:
           modifyvm:
             "--ioapic": "on"
             "--vram": "64"
+            "--large-pages": "on"
+            "--paravirt-provider": "kvm"
           # vboxmanage setextradata parameters.  Flat string key/value pairs only.
           # Nested hashes are not supported and will be skipped with a warning.
           # setextradata:

@@ -19,6 +19,7 @@ INSTANCE_DEFAULTS_DIR = "#{CONFIG_DIR}/defaults"
 INSTANCE_PROFILES_DIR = "#{CONFIG_DIR}/profiles"
 PLUGINS_CONFIG_FILE   = "#{CONFIG_DIR}/plugins/plugins.yaml"
 PROVIDERS_DIR         = "#{CODE_DIR}/providers"
+PLUGINS_CODE_DIR      = "#{CODE_DIR}/plugins"
 
 CODE_LOAD_DIRS = [
   "#{CODE_DIR}/core",
@@ -28,7 +29,8 @@ CODE_LOAD_DIRS = [
 SYSTEMS_PROGRAMS_HOST_REQUIRED = ['rsync']
 
 #
-# Load core and local Ruby source files
+# Load core and local Ruby source files.  code/plugins/ is deliberately not
+# listed here; its directories are loaded selectively by load_plugin_code.
 #
 CODE_LOAD_DIRS.each do |code_dir|
   next unless File.directory?(code_dir)
@@ -48,24 +50,18 @@ end
 # Manage Vagrant plugin install state from plugins.yaml
 #
 configure_plugins(PLUGINS_CONFIG_FILE)
-#
-# Configure the vagrant-dns resolver daemon TLD.
-#
-# The TLD controls which suffix the OS resolver delegates to the vagrant-dns
-# daemon (via /etc/resolver/<tld> on macOS, systemd-resolved on Linux).
-# Individual instance patterns are registered per-machine in
-# configure_vagrant_dns.rb using the hostname already resolved by
-# configure_vagrant_box — no extra YAML is needed for basic operation.
-#
-# Change this to match your lab's hostname suffix if it differs from 'local'.
-# For example: 'test', 'vagrant', or 'lab'.
-#
-if Vagrant.has_plugin?('vagrant-dns')
-  Vagrant.configure(VAGRANT_VERSION) do |config|
-    config.dns.tld = collect_vagrant_dns_tld
-  end
-end
 
+#
+# Load per-plugin integration code from code/plugins/<plugin-name>/ and run
+# its global hooks.
+#
+# A plugin's directory is loaded only when the plugin is ensure: present in
+# plugins.yaml, the directory exists, and Vagrant reports the plugin as
+# installed.  Plugin code registers hooks (code/core/plugins/plugin_hooks.rb);
+# the :instance hooks run from each provider as instances are configured.
+#
+load_plugin_code(PLUGINS_CONFIG_FILE, PLUGINS_CODE_DIR)
+run_plugin_hooks(:global)
 
 #
 # Load and process all instance profiles

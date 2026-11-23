@@ -9,11 +9,27 @@
 # What it does:
 #   1. Mocks the Vagrant Ruby API with recording proxy objects
 #   2. Loads all mimeograph code (YAML merging, provider config, etc.)
-#   3. Runs configure_all_instances and plugin configuration
+#   3. Runs configure_all_instances and resolves plugin state from plugins.yaml
 #   4. Serializes every recorded Vagrant API call into a static Vagrantfile
 #
 # The compiled Vagrantfile has zero YAML parsing, zero file I/O for config,
 # zero deep merging — just direct Vagrant API calls with literal values.
+#
+# The compiled file carries the same top-level steps as the real Vagrantfile,
+# in the same order:
+#   - Vagrant.require_version
+#   - required host program checks
+#   - plugin install/uninstall management (states baked in from plugins.yaml)
+#   - vagrant-dns TLD registration and VagrantDNS::Config settings
+#   - verbatim Ruby from plugin :compile hooks (code/plugins/<plugin-name>/)
+#   - instance definitions
+#
+# Plugin integration code is loaded with the same rules as the real
+# Vagrantfile (load_plugin_code): only for plugins that are ensure: present in
+# plugins.yaml and have a code/plugins/<plugin-name>/ directory.
+#
+# Messages (including warnings such as the large-pages / nested-paging
+# correction) are written to stderr at compile time, not into the output.
 #
 
 require 'digest'
@@ -64,8 +80,10 @@ end
 # Mock Vagrant module — records all Vagrant.configure blocks
 # ============================================================================
 
-$vagrant_configs     = []
-$vagrant_plugins     = {}
+$vagrant_configs      = []
+$vagrant_plugins      = {}   # plugin name => true when ensure is 'present'
+$vagrant_plugin_specs = []   # [name, ensure, version] for present/absent plugins
+$vagrant_dns_settings = {}   # VagrantDNS::Config class-level settings, in call order
 
 module Vagrant
   def self.configure(version, &block)
@@ -82,6 +100,43 @@ module Vagrant
 end
 
 # ============================================================================
+# Mock VagrantDNS module — the engine sets class-level options on
+# VagrantDNS::Config (e.g. passthrough), which is a plugin constant rather
+# than part of the config object, so the recording proxy never sees it.
+# Record those assignments here so they can be emitted into the compiled file.
+# ============================================================================
+
+module VagrantDNS
+  class Config
+    def self.method_missing(name, *args)
+      name_s = name.to_s
+      if name_s.end_with?('=')
+        $vagrant_dns_settings[name_s.chomp('=')] = args[0]
+      else
+        $vagrant_dns_settings[name_s]
+      end
+    end
+
+    def self.respond_to_missing?(_name, _include_private = false)
+      true
+    end
+  end
+
+  # Stand-in for the plugin's daemon service so the vagrant-dns :global hook
+  # can apply its daemon output and AAAA wrappers here without warning.  The
+  # real wrappers reach the compiled file through the plugin's :compile hook.
+  class Service
+    def start!(*); end
+
+    private
+
+    def run_options(_cmd, extra = {})
+      extra
+    end
+  end
+end
+
+# ============================================================================
 # Set up mimeograph constants identical to the real Vagrantfile
 # ============================================================================
 
@@ -95,11 +150,22 @@ INSTANCE_DEFAULTS_DIR = "#{CONFIG_DIR}/defaults"
 INSTANCE_PROFILES_DIR = "#{CONFIG_DIR}/profiles"
 PLUGINS_CONFIG_FILE   = "#{CONFIG_DIR}/plugins/plugins.yaml"
 PROVIDERS_DIR         = "#{CODE_DIR}/providers"
+PLUGINS_CODE_DIR      = "#{CODE_DIR}/plugins"
 
 CODE_LOAD_DIRS = [
   "#{CODE_DIR}/core",
   "#{CODE_DIR}/local"
 ]
+
+SYSTEMS_PROGRAMS_HOST_REQUIRED = ['rsync']
+
+# Sub-accessors that only exist when a plugin is installed.  The engine skips
+# these at runtime when the plugin is missing, so the compiled file wraps them
+# in the same has_plugin? check.
+PLUGIN_GUARDED_SUBS = {
+  dns:         'vagrant-dns',
+  hostmanager: 'vagrant-hostmanager'
+}
 
 # ============================================================================
 # Load mimeograph code (functions only — they use the mock Vagrant module)
@@ -133,15 +199,20 @@ end
 # Determine which plugins to enable from plugins.yaml
 # ============================================================================
 
-if File.file?(PLUGINS_CONFIG_FILE)
-  yaml    = YAML.safe_load(File.read(PLUGINS_CONFIG_FILE))
-  plugins = lookup_values_yaml(yaml, ['plugins'])
-  if plugins
-    plugins.each do |plugin_name, plugin_info|
-      plugin_info ||= {}
-      state = (plugin_info['ensure'] || 'present').to_s
-      $vagrant_plugins[plugin_name] = (state == 'present')
-    end
+# Mirrors configure_plugins: same file read, same ensure validation.  The
+# install/uninstall actions themselves are not run here; they are emitted into
+# the compiled Vagrantfile so they happen on the host that runs it.
+plugins = read_plugins_config(PLUGINS_CONFIG_FILE)
+if plugins
+  plugins.each do |plugin_name, plugin_info|
+    plugin_info ||= {}
+    state = (plugin_info['ensure'] || 'present').to_s
+    validate_value(state, %w[present absent ignore])
+    $vagrant_plugins[plugin_name] = (state == 'present')
+    next if state == 'ignore'
+
+    version = plugin_info['version']
+    $vagrant_plugin_specs << [plugin_name.to_s, state, version.nil? ? nil : version.to_s]
   end
 end
 
@@ -149,12 +220,11 @@ end
 # Run the mimeograph configuration engine against the mock
 # ============================================================================
 
-# vagrant-dns global TLD
-if Vagrant.has_plugin?('vagrant-dns')
-  Vagrant.configure(VAGRANT_VERSION) do |config|
-    config.dns.tld = collect_vagrant_dns_tld
-  end
-end
+# Plugin integration code and its global hooks (vagrant-dns TLD, passthrough,
+# ...), exactly as the Vagrantfile does.  The mock has_plugin? above answers
+# true for every ensure: present plugin.
+load_plugin_code(PLUGINS_CONFIG_FILE, PLUGINS_CODE_DIR)
+run_plugin_hooks(:global)
 
 # vagrant-hostmanager (recorded if plugin is enabled)
 if Vagrant.has_plugin?('vagrant-hostmanager')
@@ -280,7 +350,18 @@ def serialize_proxy(proxy, indent, var_name)
       lines << "#{pad}end"
 
     when :sub
-      lines += serialize_proxy(entry[:proxy], indent, "#{var_name}.#{entry[:method]}")
+      plugin    = PLUGIN_GUARDED_SUBS[entry[:method]]
+      sub_name  = "#{var_name}.#{entry[:method]}"
+      if plugin
+        sub_lines = serialize_proxy(entry[:proxy], indent + 1, sub_name)
+        unless sub_lines.empty?
+          lines << "#{pad}if Vagrant.has_plugin?(#{plugin.inspect})"
+          lines += sub_lines
+          lines << "#{pad}end"
+        end
+      else
+        lines += serialize_proxy(entry[:proxy], indent, sub_name)
+      end
     end
   end
 
@@ -386,29 +467,51 @@ output << "#   cd #{BASE_DIR}"
 output << '#   ruby tools/compile_vagrantfile.rb > Vagrantfile.compiled'
 output << '#'
 output << ''
-output << "VAGRANT_VERSION = '2'"
+output << "VAGRANT_VERSION = #{VAGRANT_VERSION.inspect}"
+output << 'Vagrant.require_version ">= #{VAGRANT_VERSION}"'
 output << ''
 
 # Emit required host program checks
-output << '#'
-output << '# Verify required host programs'
-output << '#'
-output << "['rsync'].each do |prog|"
-output << '  unless system("which #{prog} > /dev/null 2>&1")'
-output << '    abort "[ERROR]: required host program [#{prog}] not found."'
-output << '  end'
-output << 'end'
-output << ''
+unless SYSTEMS_PROGRAMS_HOST_REQUIRED.empty?
+  output << '#'
+  output << '# Verify required host programs'
+  output << '#'
+  output << "#{val_to_ruby(SYSTEMS_PROGRAMS_HOST_REQUIRED)}.each do |prog|"
+  output << '  unless system("which #{prog} > /dev/null 2>&1")'
+  output << '    abort "[ERROR]: required host program [#{prog}] not found."'
+  output << '  end'
+  output << 'end'
+  output << ''
+end
 
-# Emit plugin management (static list derived from plugins.yaml)
-enabled_plugins = $vagrant_plugins.select { |_, v| v }.keys
-unless enabled_plugins.empty?
+# Emit plugin management.  The ensure state and version of every plugin are
+# literals resolved from plugins.yaml at compile time; the install/uninstall
+# actions match configure_plugins and run on the host using the compiled file.
+unless $vagrant_plugin_specs.empty?
   output << '#'
-  output << '# Required plugins'
+  output << '# Manage Vagrant plugin install state (resolved from plugins.yaml)'
   output << '#'
-  enabled_plugins.each do |p|
-    output << "# - #{p}"
+  output << '['
+  $vagrant_plugin_specs.each_with_index do |spec, idx|
+    comma = idx == $vagrant_plugin_specs.length - 1 ? '' : ','
+    output << "  [#{spec.map { |v| val_to_ruby(v) }.join(', ')}]#{comma}"
   end
+  output << '].each do |plugin_name, ensure_state, version|'
+  output << '  installed = Vagrant.has_plugin?(plugin_name)'
+  output << ''
+  output << "  if !installed && ensure_state == 'present'"
+  output << '    version_flag = version ? "--plugin-version #{version}" : \'\''
+  output << '    puts "[INFO]: installing plugin [#{plugin_name}]#{version ? " version [#{version}]" : \'\'}."'
+  output << '    unless system("vagrant plugin install #{plugin_name} #{version_flag}".strip)'
+  output << '      abort "[ERROR]: failed to install plugin [#{plugin_name}]."'
+  output << '    end'
+  output << "  elsif installed && ensure_state == 'absent'"
+  output << '    puts "[INFO]: uninstalling plugin [#{plugin_name}]."'
+  output << '    unless system("vagrant plugin uninstall #{plugin_name}")'
+  output << '      abort "[ERROR]: failed to uninstall plugin [#{plugin_name}]."'
+  output << '    end'
+  output << '  end'
+  output << 'end'
   output << ''
 end
 
@@ -450,7 +553,11 @@ instance_blocks = []   # [name, config] pairs for instance definitions
 $vagrant_configs.each do |vc|
   config = vc[:config]
 
-  if dns_tld_only?(config)
+  if config._log.empty?
+    # Nothing was recorded on the config object (e.g. a block that only set a
+    # VagrantDNS::Config option, which is captured in $vagrant_dns_settings).
+    next
+  elsif dns_tld_only?(config)
     tld = extract_tld(config)
     dns_tlds << tld unless dns_tlds.include?(tld)
   else
@@ -460,9 +567,9 @@ end
 
 # ── Emit deduplicated DNS TLD blocks ─────────────────────────────────────
 
-unless dns_tlds.empty?
+unless dns_tlds.empty? && $vagrant_dns_settings.empty?
   output << '#'
-  output << '# vagrant-dns TLD registration'
+  output << '# vagrant-dns TLD registration and plugin settings'
   output << '#'
   output << "if Vagrant.has_plugin?('vagrant-dns')"
   dns_tlds.each do |tld|
@@ -470,7 +577,18 @@ unless dns_tlds.empty?
     output << "    config.dns.tld = #{tld.inspect}"
     output << "  end"
   end
+  $vagrant_dns_settings.each do |setting, value|
+    output << "  VagrantDNS::Config.#{setting} = #{val_to_ruby(value)}"
+  end
   output << 'end'
+  output << ''
+end
+
+# ── Emit verbatim Ruby from plugin :compile hooks ────────────────────────
+
+run_plugin_hooks(:compile).each do |lines|
+  next unless lines.is_a?(Array) && !lines.empty?
+  output += lines
   output << ''
 end
 

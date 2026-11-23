@@ -12,6 +12,7 @@ It allows large portions of Vagrant and instance configuration (VMs, hardware, n
 - Hierarchical defaults with deep merging: global defaults, per-profile-group defaults, and per-instance overrides
 - Multiple profile groups, each with independent instances and default settings
 - Simple Vagrant plugin ensure state management via a single YAML file
+- Optional per-plugin integration code under `code/plugins/<plugin-name>/`, loaded only for plugins that are present
 - Deterministic pseudo-random IP address assignment stable across reprovisions
 - Automatic network interface bring-up and MTU provisioning on every boot
 - Bridge interface auto-correction when specified host interfaces are not found
@@ -45,12 +46,14 @@ mimeograph/
 │   │   ├── logging/              # handle_message, exit_with_message
 │   │   ├── misc/                 # lookup_values_yaml, validate_value, helpers
 │   │   ├── networking/           # Forwarded port configuration
-│   │   ├── plugins/              # Plugin ensure state management
+│   │   ├── plugins/              # Plugin ensure state, plugin code loader, hook registry
 │   │   └── profiles/             # YAML profile and defaults loading
 │   ├── local/                    # Site-local Ruby code — loaded automatically
+│   ├── plugins/                  # Per-plugin integration code, loaded only when present
+│   │   └── vagrant-dns/          # vagrant-dns TLD, hostname patterns, daemon output
 │   └── providers/                # Provider-specific code loaded on demand
 │       ├── virtualbox/           # VirtualBox provider (implemented)
-│       ├── libvirt/              # libvirt stub
+│       ├── libvirt/              # libvirt provider (implemented; console viewer)
 │       └── vmware/               # VMware stub
 ├── config/
 │   ├── defaults/                 # Default settings YAML files
@@ -60,6 +63,9 @@ mimeograph/
 │   └── profiles/                 # Instance profile YAML files
 └── files/
     └── scripts/                  # Host-side scripts for provisioning
+└── tools/
+    ├── compile_vagrantfile.rb    # Static Vagrantfile compiler
+    └── libvirt-console           # Opens virt-viewer/virt-manager on a libvirt VM's console
 ```
 
 ---
@@ -71,9 +77,10 @@ On each `vagrant` command:
 1. All Ruby files under `code/core/` and `code/local/` are loaded.
 2. Required host programs (currently `rsync`) are verified.
 3. `config/plugins/plugins.yaml` is read and plugin ensure states are enforced.
-4. Every `*.yaml` file in `config/profiles/` is processed as a profile group.
-5. For each profile group, `config/defaults/defaults.yaml` is loaded as the base. If a matching group-specific file exists (`config/defaults/<group_name>.yaml`), it is deep-merged on top — so group files only need to contain values that differ from the global defaults.
-6. Each instance in the group is deep-merged with the defaults (defaults as the base, instance values win on conflict) and handed to Vagrant's configuration API.
+4. For every plugin that is `present`, installed, and has a `code/plugins/<plugin-name>/` directory, that directory's Ruby files are loaded and its global hooks run (for example, the vagrant-dns resolver TLD).
+5. Every `*.yaml` file in `config/profiles/` is processed as a profile group.
+6. For each profile group, `config/defaults/defaults.yaml` is loaded as the base. If a matching group-specific file exists (`config/defaults/<group_name>.yaml`), it is deep-merged on top — so group files only need to contain values that differ from the global defaults.
+7. Each instance in the group is deep-merged with the defaults (defaults as the base, instance values win on conflict) and handed to Vagrant's configuration API. Plugin instance hooks (such as vagrant-dns hostname registration) run as part of each provider's configuration.
 
 ---
 
@@ -147,7 +154,38 @@ plugins:
     ensure: ignore
 ```
 
-Plugin-specific configuration (such as vbguest's `auto_update` setting) should be applied via Vagrant's native configuration support in a `Vagrantfile.local` or through Vagrant's built-in plugin config mechanisms, rather than through mimeograph.
+### Plugin integration code
+
+mimeograph-side code for a plugin lives in `code/plugins/<plugin-name>/`, where the directory name is exactly the plugin name. That directory is loaded only when **all** of these hold:
+
+1. the plugin is `ensure: present` in `plugins.yaml` (plugins set to `absent` or `ignore` are never loaded, even if installed);
+2. `code/plugins/<plugin-name>/` exists — plugins without a directory are simply installed or removed;
+3. Vagrant reports the plugin as installed in this run. On the run that first installs a plugin, Vagrant has not loaded it yet, so its code is skipped with a warning and used from the next `vagrant` command on.
+
+Every `*.rb` file under the directory is required, in sorted path order. The files define functions and register hooks; core and provider code never call plugin functions by name. The hook phases (see `code/core/plugins/plugin_hooks.rb`) are:
+
+| Phase | Runs | Block arguments |
+|-------|------|-----------------|
+| `:global` | once, from the Vagrantfile, before instances are processed | `settings` |
+| `:instance` | once per instance, from each provider (after networking) | `machine, instance_profile, provider, settings` |
+| `:compile` | only in `tools/compile_vagrantfile.rb`; returns Ruby source lines to embed verbatim | `settings` |
+
+```ruby
+# code/plugins/vagrant-foo/hooks.rb
+register_plugin_hook('vagrant-foo', :instance) do |machine, instance_profile, provider, settings|
+  configure_vagrant_foo(machine, instance_profile, provider)
+end
+```
+
+A plugin entry may carry an optional `settings` hash, which is passed to its hooks as `settings`. Each plugin's `hooks.rb` documents the keys it accepts.
+
+```yaml
+plugins:
+  vagrant-dns:
+    ensure: present
+    settings:
+      daemon_output: false
+```
 
 **Version changes:** changing `version` will not auto-update an already-installed plugin. Set the plugin to `absent`, run `vagrant`, then set the new version and `install` back to `present`.
 
@@ -331,7 +369,31 @@ When no `hostname` key is set, the sanitised instance name is used (e.g. `myvm`)
 
 ### vagrant-dns log and load issues
 
-By default, vagrant-dns writes to log file, under Debian-based distros under ${HOME}/.vagrant.d/tmp/dns/daemon/vagrant-dns.output which may consume excessive amounts of filesystem space and need periodic truncation.
+vagrant-dns starts its daemon with output logging hard-coded on, so every passthrough query and the RubyDNS/async console log are appended without limit to `~/.vagrant.d/tmp/dns/daemon/vagrant-dns.output`. The plugin has no option to turn this off — `VagrantDNS::Config.logger`, which its README still shows, is never read by the plugin.
+
+mimeograph controls this from `config/plugins/plugins.yaml`:
+
+```yaml
+  vagrant-dns:
+    ensure: present
+    settings:
+      passthrough: true      # true | false | unknown
+      daemon_output: false   # false: daemon stdout/stderr to /dev/null; true: vagrant-dns default .output file
+      log_level: fatal       # debug | info | warn | error | fatal (quietest)
+      block_aaaa: true       # answer every AAAA query locally with "no IPv6 address"
+```
+
+The values shown are the defaults. `daemon_output: false` wraps vagrant-dns's daemon options so the daemon's stdout and stderr are reopened on `/dev/null`. `log_level` sets `CONSOLE_LEVEL`, which the daemon's logger reads at startup. The code is in `code/plugins/vagrant-dns/daemon_output.rb`.
+
+Both settings apply the next time the daemon starts (`vagrant dns --start` or `--restart`, `vagrant up`, `vagrant reload`); a daemon that is already running keeps writing to its old output until restarted. An existing `vagrant-dns.output` file is left in place and can be deleted once the daemon has been restarted.
+
+### AAAA (IPv6) queries
+
+vagrant-dns only serves A records, but resolvers ask for both A and AAAA for nearly every name. Without intervention, the daemon forwards each AAAA query for a VM name to the upstream resolver (with `passthrough: true`), or fails it with NOTIMP (with `passthrough: false`). Forwarding is slow, and when the TLD is a real domain it sends VM names upstream; the upstream answer is usually NXDOMAIN even though the name exists.
+
+With `block_aaaa: true` (the default), the daemon answers every AAAA query itself with an empty NOERROR response (NODATA: the name has no IPv6 address), before any vagrant-dns rule runs. AAAA queries are never forwarded. A records, and passthrough for other record types, are unaffected. NODATA rather than NXDOMAIN is deliberate: NXDOMAIN would say the name does not exist, which some resolvers then apply to its A record too.
+
+The daemon only receives queries for the vagrant-dns TLD(s), so this does not change IPv6 resolution for anything else on the host. The filter is installed when the daemon starts (code in `code/plugins/vagrant-dns/block_aaaa.rb`), so restart the daemon after changing the setting.
 
 ---
 
@@ -366,7 +428,12 @@ Key libvirt-specific YAML options under `providers.libvirt.instance`:
 | `hardware.cpu_mode` | `host-model`, `host-passthrough`, or `custom` | `host-model` |
 | `hardware.nested` | Enable nested virtualization | `false` |
 | `hardware.graphics_type` | Display protocol: `vnc`, `spice`, `none` | `vnc` |
+| `hardware.graphics_ip` | Address the VNC/SPICE socket listens on | `127.0.0.1` |
 | `hardware.disks` | List of additional disk definitions (size, type, bus, cache) | — |
+| `communication.display.gui` | Open a console viewer when the instance is brought up | `false` |
+| `communication.display.viewer` | `virt-viewer` or `virt-manager` | `virt-viewer` |
+
+A working example of every option is the `example_libvirt` group: `config/defaults/example_libvirt.yaml` (group defaults) and `config/profiles/example_libvirt.yaml` (one small Rocky 9.8 VM with the console on): `vagrant up example-libvirt-rocky9`.
 
 For `public_network` interfaces with libvirt, a `dev` key specifying the host device name is required (libvirt uses macvtap rather than a traditional bridge):
 
@@ -378,6 +445,50 @@ networking:
       dev: 'enp3s0'
       ipv4:
         ip_addr: dhcp
+```
+
+#### libvirt console window
+
+libvirt has no VirtualBox-style `gui` flag: every libvirt VM already has a display (`hardware.graphics_type`, VNC on 127.0.0.1 by default), so it appears in virt-manager and Cockpit (cockpit-machines) like any other VM. Setting `communication.display.gui: true` makes mimeograph open a viewer on it for you:
+
+```yaml
+providers:
+  libvirt:
+    instance:
+      communication:
+        display:
+          gui: true                       # default false
+          viewer: 'virt-viewer'           # or 'virt-manager'
+          # uri: 'qemu:///system'         # default: worked out from the instance (below)
+          wait_seconds: 300               # virt-viewer: how long to wait for the VM to be created
+          script: 'tools/libvirt-console' # relative to the project root, or absolute
+```
+
+| Viewer | When it opens | What you see |
+|--------|---------------|--------------|
+| `virt-viewer` | before `vagrant up`/`reload`/`resume`, waiting (`--wait --reconnect`) for the VM | the whole boot (firmware, bootloader, kernel); stays attached across guest reboots |
+| `virt-manager` | after `vagrant up`/`reload`/`resume` | the virt-manager window on that VM's console (`--show-domain-console`) |
+
+The viewer is started detached by `tools/libvirt-console`, so `vagrant up` never waits for the window and a display problem never fails it. The VM is found by the domain UUID vagrant-libvirt writes to `.vagrant/machines/<name>/libvirt/id`. If a viewer for that VM is already open, a second one is not started. The background watcher logs to `$XDG_RUNTIME_DIR/libvirt-console.log` (override with `LIBVIRT_CONSOLE_LOG`).
+
+The connection URI, when `display.uri` is not set, is the instance `uri`; else `qemu+ssh://<username>@<host>/system` when a remote `host` is set; else `qemu:///session` when `qemu_use_session` is true; else `qemu:///system`.
+
+Where the window appears is decided at run time:
+
+| How you are logged in to the host running `vagrant` | Result |
+|-----------------------------------------------------|--------|
+| Desktop session (`DISPLAY` or `WAYLAND_DISPLAY` set) | the window opens there |
+| SSH with X forwarding (`ssh -X`, or `ForwardX11 yes` in `~/.ssh/config`) | the window opens on your desktop through the forwarding |
+| SSH without X forwarding | nothing is opened; it prints the `ssh -X` command and the `virt-viewer --connect qemu+ssh://you@host/system …` command to run on your desktop instead |
+| SSH with a `DISPLAY` that does not work (no `xauth` on the host, `X11Forwarding no` in its sshd) | nothing is opened; the reason is printed |
+
+X forwarding cannot be switched on from the host side: it is requested by your ssh client when you connect. The host needs `xauth` and `X11Forwarding yes` (the default on most distributions), plus `virt-viewer` and/or `virt-manager` installed. With `qemu:///system` the user also needs access to libvirt (usually membership of the `libvirt` group).
+
+The helper can be run by hand, for example after reconnecting with `ssh -X`:
+
+```bash
+tools/libvirt-console --id-file .vagrant/machines/example-libvirt-rocky9/libvirt/id --mode open
+tools/libvirt-console --help
 ```
 
 ### VMware Desktop
@@ -458,7 +569,8 @@ The default if unspecified is `virtualbox`. Only one provider per instance name 
 | `communication.ssh.username` | SSH username on the guest. Default: `vagrant` |
 | `communication.ssh.password` | SSH password. Only used when auth_method is `password`. Default: `vagrant` |
 | `communication.ssh.insert_key` | Replace the insecure Vagrant keypair with a generated one. Default: `true` |
-| `communication.ssh.private_key_path` | Path to a private key file. Only set when using a pre-baked keypair. |
+| `communication.ssh.private_key_path` | Path to a private key file, or a YAML list of paths. Only set when using a pre-baked keypair (e.g. a FIPS/STIG-compatible key) instead of Vagrant's insecure key. Pair with `insert_key: false` on hardened guests. A missing file is reported as a warning. |
+| `communication.ssh.keys_only` | Only authenticate with the configured key(s); forbid password fallback. Only applied when set. Recommended `true` on STIG guests. |
 | `communication.ssh.forward_agent` | Forward SSH agent from host into guest. Default: `false` |
 | `communication.ssh.forward_x11` | Forward X11 display from guest to host. Default: `false` |
 | `hardware.cpus` | vCPU count. Default: `2` |
@@ -496,15 +608,21 @@ The default if unspecified is `virtualbox`. Only one provider per instance name 
 | `communication.ssh.username` | SSH username. Default: `vagrant` |
 | `communication.ssh.password` | SSH password. Default: `vagrant` |
 | `communication.ssh.insert_key` | Replace insecure keypair. Default: `true` |
-| `communication.ssh.private_key_path` | Path to a private key file for SSH authentication. |
+| `communication.ssh.private_key_path` | Path to a private key file for SSH authentication, or a YAML list of paths. Pair with `insert_key: false` on FIPS/STIG guests. A missing file is reported as a warning. |
+| `communication.ssh.keys_only` | Only authenticate with the configured key(s); forbid password fallback. Only applied when set. Recommended `true` on STIG guests. |
 | `communication.ssh.forward_agent` | Forward SSH agent. Default: `false` |
 | `communication.ssh.forward_x11` | Forward X11. Default: `false` |
+| `communication.display.gui` | Open a console viewer on `vagrant up`/`reload`/`resume` (see [libvirt console window](#libvirt-console-window)). Default: `false` |
+| `communication.display.viewer` | `virt-viewer` (opened before up, shows the whole boot) or `virt-manager` (opened after up). Default: `virt-viewer` |
+| `communication.display.uri` | libvirt URI the viewer connects to. Default: instance `uri`, else `qemu+ssh://<username>@<host>/system` for a remote `host`, else `qemu:///session` if `qemu_use_session`, else `qemu:///system` |
+| `communication.display.wait_seconds` | virt-viewer only: seconds the background watcher waits for the VM to be created. Default: `300` |
+| `communication.display.script` | Helper that opens the viewer, relative to the project root or absolute. Default: `tools/libvirt-console` |
 | `hardware.cpus` | vCPU count. Default: `2` |
 | `hardware.memory` | RAM in MB. Default: `512` |
 | `hardware.cpu_mode` | `host-model`, `host-passthrough`, or `custom`. Default: `host-model` |
 | `hardware.cpu_model` | CPU model name when cpu_mode is `custom`. |
 | `hardware.nested` | Enable nested virtualization. Default: `false` |
-| `hardware.graphics_type` | Display protocol: `vnc`, `spice`, `none`. Default: `vnc` |
+| `hardware.graphics_type` | Display protocol: `vnc`, `spice`, `none` (no display, and no console viewer). Default: `vnc` |
 | `hardware.graphics_ip` | IP the graphics socket binds to. Default: `127.0.0.1` |
 | `hardware.boot` | Boot order: `hd`, `network`, `cdrom`. Default: `hd` |
 | `hardware.disks` | List of additional disk definitions (`size`, `type`, `bus`, `cache`). |
@@ -533,7 +651,8 @@ The default if unspecified is `virtualbox`. Only one provider per instance name 
 | `communication.ssh.username` | SSH username. Default: `vagrant` |
 | `communication.ssh.password` | SSH password. Default: `vagrant` |
 | `communication.ssh.insert_key` | Replace insecure keypair. Default: `true` |
-| `communication.ssh.private_key_path` | Path to a private key file for SSH authentication. |
+| `communication.ssh.private_key_path` | Path to a private key file for SSH authentication, or a YAML list of paths. Pair with `insert_key: false` on FIPS/STIG guests. A missing file is reported as a warning. |
+| `communication.ssh.keys_only` | Only authenticate with the configured key(s); forbid password fallback. Only applied when set. Recommended `true` on STIG guests. |
 | `communication.ssh.forward_agent` | Forward SSH agent. Default: `false` |
 | `communication.ssh.forward_x11` | Forward X11. Default: `false` |
 | `hardware.cpus` | vCPU count. Default: `2` |
@@ -616,6 +735,7 @@ The real-ish world scenario has been updated to reflect the program's structure.
 
 **Providers**
 - libvirt provider fully implemented: box/hostname configuration, hardware (CPUs, memory, CPU mode, nested virt, graphics, additional disks), private and public (macvtap) networking, remote libvirt connection options.
+- libvirt console viewer: `communication.display.gui: true` opens virt-viewer (or virt-manager) on the VM's console when it is brought up, locally or through SSH X forwarding, and prints instructions when no window can be opened. `example_libvirt` is now a complete, bootable example group.
 - VMware Desktop provider fully implemented: box/hostname configuration, hardware with VMX key/value customization, private and public (bridged) networking. Supports Fusion, Workstation, and Player via `vagrant-vmware-desktop`.
 
 **Architecture**
@@ -626,7 +746,7 @@ The real-ish world scenario has been updated to reflect the program's structure.
 
 **Plugin management**
 - `config/plugins/defaults.yaml` has been replaced by `config/plugins/plugins.yaml` with a simpler flat structure.
-- The plugin handler dispatch system (`code_load`, per-plugin Ruby files under `code/plugins/`, `send()`-based function dispatch) has been removed entirely. Plugin-specific configuration should use Vagrant's native plugin config mechanisms.
+- The plugin handler dispatch system (`code_load`, per-plugin Ruby files under `code/plugins/`, `send()`-based function dispatch) has been removed entirely. Per-plugin code has since returned in a narrower form: `code/plugins/<plugin-name>/` directories loaded only for present plugins, attached through a fixed set of hook phases instead of name-based dispatch (see [Plugin integration code](#plugin-integration-code)).
 - Plugin install and uninstall operations are now plain `system()` calls. Threading has been removed.
 
 **Bug fixes applied**
